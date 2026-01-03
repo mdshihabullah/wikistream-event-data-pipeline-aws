@@ -1,0 +1,268 @@
+# ============================================================================
+# TERRAFORM GENERATED FILES
+# ============================================================================
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform.tfplan
+crash.log
+crash.*.log
+terraform-provider-*
+override.tf
+override.tf.json
+tfplan
+
+# ============================================================================
+# IDE AND EDITOR FILES
+# ============================================================================
+# VS Code
+.vscode/
+*.code-workspace
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# PyCharm
+.idea/
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.[!.]*.sw[a-z]
+.[!.]*.un~
+Session.vim
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+auto-save-list
+tramp
+.\#*
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# ============================================================================
+# PYTHON
+# ============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+*.venv
+env.bak/
+venv.bak/
+
+# PyPI
+.Pipfile
+*.egg
+.eggs
+dist
+build
+eggs
+.eggs
+lib
+lib64
+parts
+sdist
+var
+wheels
+pip-wheel-metadata
+share/python-wheels
+pip-delete-this-directory.txt
+
+# PyCharm
+.idea/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Environments
+.env
+.env.local
+.env.*.local
+*.env
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# ============================================================================
+# LOGS AND TEMPORARY FILES
+# ============================================================================
+*.log
+logs/
+*.tmp
+*.temp
+*.cache
+*.bak
+*.backup
+
+# ============================================================================
+# AIRFLOW
+# ============================================================================
+airflow.cfg
+airflow.db
+airflow-webserver.pid
+airflow-scheduler.pid
+airflow-worker.pid
+airflow-triggerer.pid
+logs/
+dags/.airflowignore
+
+# ============================================================================
+# DOCKER
+# ============================================================================
+.dockerignore
+docker-compose.override.yml
+
+# ============================================================================
+# OPERATING SYSTEM FILES
+# ============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+Icon
+.thumb
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.directory
+.Trash-*
+.nfs*
+
+# ============================================================================
+# AWS AND CLOUD PROVIDERS
+# ============================================================================
+.aws/
+.aws-sam/
+.boto/
+credentials
+
+# Sensitive configuration files
+secrets/
+*.secrets
+*.secrets.json
+*credentials.json
+*config.json
+
+# ============================================================================
+# GIT
+# ============================================================================
+*.orig
+*.rej
+.git
+
+# ============================================================================
+# DATA FILES
+# ============================================================================
+*.csv
+*.json
+*.parquet
+!quicksight/**/*.json
+!monitoring/**/*.json
+
+# Large data files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+!infrastructure/terraform/bronze_restart_lambda.zip
+
+# ============================================================================
+# DOCUMENTATION TEMP FILES
+# ============================================================================
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.toc
+
