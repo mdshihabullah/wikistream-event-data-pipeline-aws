@@ -26,6 +26,8 @@ from pyspark.sql.window import Window
 # Configuration
 # =============================================================================
 
+SCHEMA_VERSION = "1.0.0"  # Track schema version for evolution
+
 # Risk scoring thresholds
 RISK_THRESHOLDS = {
     "edits_per_hour": 50,      # High if user makes >50 edits/hour
@@ -51,6 +53,7 @@ def create_spark_session() -> SparkSession:
         # Adaptive query execution
         .config("spark.sql.adaptive.enabled", "true")
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.sql.adaptive.skewJoin.enabled", "true")
         # Iceberg timestamp handling
         .config("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
         .getOrCreate()
@@ -106,7 +109,8 @@ def compute_hourly_stats(spark, start_date: str, end_date: str):
             SUM(CASE WHEN is_large_deletion = true THEN 1 ELSE 0 END) AS large_deletions,
             SUM(CASE WHEN is_large_addition = true THEN 1 ELSE 0 END) AS large_additions,
             
-            CURRENT_TIMESTAMP() AS gold_processed_at
+            CURRENT_TIMESTAMP() AS gold_processed_at,
+            '{SCHEMA_VERSION}' AS schema_version
             
         FROM s3tablesbucket.silver.cleaned_events
         WHERE event_date >= '{start_date}' AND event_date <= '{end_date}'
@@ -235,7 +239,8 @@ def compute_risk_scores(spark, start_date: str, end_date: str):
                 + CASE WHEN large_deletions > {RISK_THRESHOLDS['large_deletions']} THEN 30 ELSE 0 END
             )) >= 70 THEN true ELSE false END AS alert_triggered,
             
-            CURRENT_TIMESTAMP() AS gold_processed_at
+            CURRENT_TIMESTAMP() AS gold_processed_at,
+            '{SCHEMA_VERSION}' AS schema_version
             
         FROM user_metrics
     """)
@@ -254,8 +259,8 @@ def main():
     print(f"Started at: {datetime.utcnow().isoformat()}")
     print("=" * 60)
     
-    # Parse arguments
-    lookback_hours = 1
+    # Parse arguments: lookback_hours (default 24 hours to capture all recent data)
+    lookback_hours = 24
     if len(sys.argv) >= 2:
         lookback_hours = int(sys.argv[1])
     
@@ -298,7 +303,8 @@ def main():
             type_log BIGINT,
             large_deletions BIGINT,
             large_additions BIGINT,
-            gold_processed_at TIMESTAMP
+            gold_processed_at TIMESTAMP,
+            schema_version STRING
         )
         USING iceberg
         PARTITIONED BY (stat_date, region)
@@ -306,10 +312,10 @@ def main():
             'write.format.default' = 'parquet',
             'write.parquet.compression-codec' = 'zstd',
             'write.target-file-size-bytes' = '268435456',
-            'format-version' = '2',
-            'write.merge.mode' = 'copy-on-write',
-            'write.delete.mode' = 'copy-on-write',
-            'write.update.mode' = 'copy-on-write'
+            'format-version' = '3',
+            'write.merge.mode' = 'merge-on-read',
+            'write.delete.mode' = 'merge-on-read',
+            'write.update.mode' = 'merge-on-read'
         )
     """)
     
@@ -327,7 +333,8 @@ def main():
             risk_level STRING,
             evidence STRING,
             alert_triggered BOOLEAN,
-            gold_processed_at TIMESTAMP
+            gold_processed_at TIMESTAMP,
+            schema_version STRING
         )
         USING iceberg
         PARTITIONED BY (stat_date)
@@ -335,10 +342,10 @@ def main():
             'write.format.default' = 'parquet',
             'write.parquet.compression-codec' = 'zstd',
             'write.target-file-size-bytes' = '268435456',
-            'format-version' = '2',
-            'write.merge.mode' = 'copy-on-write',
-            'write.delete.mode' = 'copy-on-write',
-            'write.update.mode' = 'copy-on-write'
+            'format-version' = '3',
+            'write.merge.mode' = 'merge-on-read',
+            'write.delete.mode' = 'merge-on-read',
+            'write.update.mode' = 'merge-on-read'
         )
     """)
     
@@ -351,6 +358,7 @@ def main():
     
     if hourly_count > 0:
         # MERGE with partition columns (stat_date, region) + domain for unique key
+        # Note: Iceberg requires explicit column lists, not UPDATE SET * or INSERT *
         spark.sql("""
             MERGE INTO s3tablesbucket.gold.hourly_stats AS target
             USING incoming_hourly AS source
@@ -358,7 +366,29 @@ def main():
                AND target.region = source.region
                AND target.stat_hour = source.stat_hour 
                AND target.domain = source.domain
-            WHEN MATCHED THEN UPDATE SET *
+            WHEN MATCHED THEN UPDATE SET
+                target.stat_date = source.stat_date,
+                target.stat_hour = source.stat_hour,
+                target.domain = source.domain,
+                target.region = source.region,
+                target.total_events = source.total_events,
+                target.unique_users = source.unique_users,
+                target.unique_pages = source.unique_pages,
+                target.bytes_added = source.bytes_added,
+                target.bytes_removed = source.bytes_removed,
+                target.avg_edit_size = source.avg_edit_size,
+                target.bot_edits = source.bot_edits,
+                target.human_edits = source.human_edits,
+                target.bot_percentage = source.bot_percentage,
+                target.anonymous_edits = source.anonymous_edits,
+                target.type_edit = source.type_edit,
+                target.type_new = source.type_new,
+                target.type_categorize = source.type_categorize,
+                target.type_log = source.type_log,
+                target.large_deletions = source.large_deletions,
+                target.large_additions = source.large_additions,
+                target.gold_processed_at = source.gold_processed_at,
+                target.schema_version = source.schema_version
             WHEN NOT MATCHED THEN INSERT *
         """)
         print(f"Merged hourly stats")
@@ -371,11 +401,26 @@ def main():
     print(f"Incoming risk scores: {risk_count}")
     
     if risk_count > 0:
+        # MERGE with explicit columns
+        # Note: Iceberg requires explicit column lists, not UPDATE SET * or INSERT *
         spark.sql("""
             MERGE INTO s3tablesbucket.gold.risk_scores AS target
             USING incoming_risk AS source
             ON target.stat_date = source.stat_date AND target.entity_id = source.entity_id
-            WHEN MATCHED THEN UPDATE SET *
+            WHEN MATCHED THEN UPDATE SET
+                target.stat_date = source.stat_date,
+                target.entity_id = source.entity_id,
+                target.entity_type = source.entity_type,
+                target.total_edits = source.total_edits,
+                target.edits_per_hour_avg = source.edits_per_hour_avg,
+                target.large_deletions = source.large_deletions,
+                target.domains_edited = source.domains_edited,
+                target.risk_score = source.risk_score,
+                target.risk_level = source.risk_level,
+                target.evidence = source.evidence,
+                target.alert_triggered = source.alert_triggered,
+                target.gold_processed_at = source.gold_processed_at,
+                target.schema_version = source.schema_version
             WHEN NOT MATCHED THEN INSERT *
         """)
         print(f"Merged risk scores")

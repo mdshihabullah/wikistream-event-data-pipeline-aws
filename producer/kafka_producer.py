@@ -40,7 +40,7 @@ WIKIMEDIA_SSE_URL = "https://stream.wikimedia.org/v2/stream/recentchange"
 
 # User-Agent header required by Wikimedia API etiquette
 # See: https://meta.wikimedia.org/wiki/User-Agent_policy
-USER_AGENT = "WikiStreamProducer/1.0 (Data Engineering Portfolio Project; https://github.com/wikistream) Python/requests"
+USER_AGENT = "WikiStreamProducer/1.0 (https://github.com/mdshihabullah/wikistream-event-data-pipeline) Python/requests"
 
 # Domain filter - high activity + regional wikis
 TARGET_DOMAINS = {

@@ -358,10 +358,10 @@ def main():
             'write.target-file-size-bytes' = '268435456',
             'write.metadata.delete-after-commit.enabled' = 'true',
             'write.metadata.previous-versions-max' = '10',
-            'format-version' = '2',
-            'write.merge.mode' = 'copy-on-write',
-            'write.delete.mode' = 'copy-on-write',
-            'write.update.mode' = 'copy-on-write'
+            'format-version' = '3',
+            'write.merge.mode' = 'merge-on-read',
+            'write.delete.mode' = 'merge-on-read',
+            'write.update.mode' = 'merge-on-read'
         )
     """)
     

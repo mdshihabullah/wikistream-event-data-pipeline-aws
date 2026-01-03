@@ -40,8 +40,14 @@ def create_spark_session() -> SparkSession:
     return (
         SparkSession.builder
         .appName("WikiStream-DataQuality")
+        # Adaptive query execution for better performance
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.sql.adaptive.skewJoin.enabled", "true")
         # Iceberg extensions
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
+        # Iceberg timestamp handling
+        .config("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
         # S3 Tables Catalog (config passed via spark-submit)
         # Deequ requires
         .config("spark.jars.packages", "com.amazon.deequ:deequ:2.0.7-spark-3.5")

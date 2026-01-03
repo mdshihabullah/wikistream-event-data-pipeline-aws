@@ -231,22 +231,9 @@ resource "aws_s3tables_table_bucket_policy" "wikistream" {
           AWS = aws_iam_role.emr_serverless.arn
         }
         Action = [
-          "s3tables:CreateNamespace",
-          "s3tables:CreateTable",
-          "s3tables:DeleteNamespace",
-          "s3tables:DeleteTable",
-          "s3tables:GetNamespace",
-          "s3tables:GetTable",
-          "s3tables:GetTableMetadataLocation",
-          "s3tables:ListNamespaces",
-          "s3tables:ListTables",
-          "s3tables:RenameTable",
-          "s3tables:UpdateTableMetadataLocation"
+          "s3tables:*"
         ]
-        Resource = [
-          aws_s3tables_table_bucket.wikistream.arn,
-          "${aws_s3tables_table_bucket.wikistream.arn}/*"
-        ]
+        Resource = "*"
       }
     ]
   })
@@ -449,37 +436,9 @@ resource "aws_iam_role_policy" "emr_serverless" {
         Sid    = "S3TablesFullAccess"
         Effect = "Allow"
         Action = [
-          "s3tables:CreateNamespace",
-          "s3tables:CreateTable",
-          "s3tables:CreateTableBucket",
-          "s3tables:DeleteNamespace",
-          "s3tables:DeleteTable",
-          "s3tables:DeleteTableBucket",
-          "s3tables:DeleteTableBucketPolicy",
-          "s3tables:DeleteTablePolicy",
-          "s3tables:GetNamespace",
-          "s3tables:GetTable",
-          "s3tables:GetTableBucket",
-          "s3tables:GetTableBucketMaintenanceConfiguration",
-          "s3tables:GetTableBucketPolicy",
-          "s3tables:GetTableMaintenanceConfiguration",
-          "s3tables:GetTableMaintenanceJobStatus",
-          "s3tables:GetTableMetadataLocation",
-          "s3tables:GetTablePolicy",
-          "s3tables:ListNamespaces",
-          "s3tables:ListTableBuckets",
-          "s3tables:ListTables",
-          "s3tables:PutTableBucketMaintenanceConfiguration",
-          "s3tables:PutTableBucketPolicy",
-          "s3tables:PutTableMaintenanceConfiguration",
-          "s3tables:PutTablePolicy",
-          "s3tables:RenameTable",
-          "s3tables:UpdateTableMetadataLocation"
+          "s3tables:*"
         ]
-        Resource = [
-          aws_s3tables_table_bucket.wikistream.arn,
-          "${aws_s3tables_table_bucket.wikistream.arn}/*"
-        ]
+        Resource = "*"
       },
       {
         Sid    = "S3TablesDataAccess"
@@ -527,10 +486,12 @@ resource "aws_iam_role_policy" "emr_serverless" {
           "s3:HeadObject",
           "s3:HeadBucket"
         ]
-        # S3 Tables creates S3 Express One Zone directory buckets
-        # Format: s3://<random>--table-s3 (no account ID in bucket name)
-        # ARN format for S3 Express: arn:aws:s3:::*--table-s3/*
+        # S3 Tables creates underlying storage buckets with two patterns:
+        # 1. Pattern: s3tables-<random>-<account>-<region> (actual bucket)
+        # 2. Pattern: <random>--table-s3 (virtual path in metadata)
         Resource = [
+          "arn:aws:s3:::s3tables-*",
+          "arn:aws:s3:::s3tables-*/*",
           "arn:aws:s3:::*--table-s3",
           "arn:aws:s3:::*--table-s3/*"
         ]
@@ -718,7 +679,7 @@ resource "aws_ecr_lifecycle_policy" "producer" {
 
 resource "aws_emrserverless_application" "spark" {
   name          = "${local.name_prefix}-spark"
-  release_label = "emr-7.6.0" # Iceberg format-version 2 support (v3 requires EMR 7.12+)
+  release_label = "emr-7.12.0" # Iceberg format-version 3 support with Apache Iceberg 1.10.0
   type          = "SPARK"
 
   # Account quota is 16 vCPUs - optimize for sequential job execution
@@ -889,7 +850,7 @@ resource "aws_sfn_state_machine" "silver_processing" {
         "JobDriver": {
           "SparkSubmit": {
             "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/silver_batch_job.py",
-            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.5,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn}"
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
           }
         },
         "ConfigurationOverrides": {
@@ -981,7 +942,7 @@ resource "aws_sfn_state_machine" "gold_processing" {
         "JobDriver": {
           "SparkSubmit": {
             "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/gold_batch_job.py",
-            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.5,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn}"
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
           }
         },
         "ConfigurationOverrides": {
@@ -1074,7 +1035,7 @@ resource "aws_sfn_state_machine" "data_quality" {
           "SparkSubmit": {
             "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/data_quality_job.py",
             "EntryPointArguments": ["${aws_sns_topic.alerts.arn}"],
-            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.6.1,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.5,software.amazon.awssdk:bundle:2.29.0,com.amazon.deequ:deequ:2.0.7-spark-3.5 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn}"
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0,com.amazon.deequ:deequ:2.0.7-spark-3.5 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
           }
         },
         "ConfigurationOverrides": {
@@ -1340,21 +1301,33 @@ def handler(event, context):
         
         # Start new Bronze streaming job
         iceberg_packages = (
-            "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.8.0,"
-            "software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.4,"
+            "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,"
+            "software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,"
             "software.amazon.awssdk:bundle:2.29.0,"
             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
             "software.amazon.msk:aws-msk-iam-auth:2.2.0"
         )
+        
+        spark_conf = [
+            "--conf", "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
+            "--conf", "spark.sql.adaptive.enabled=true",
+            "--conf", "spark.sql.adaptive.coalescePartitions.enabled=true",
+            "--conf", "spark.sql.adaptive.skewJoin.enabled=true",
+            "--conf", "spark.sql.iceberg.handle-timestamp-without-timezone=true"
+        ]
         
         spark_conf = (
             f"--conf spark.executor.cores=2 "
             f"--conf spark.executor.memory=4g "
             f"--conf spark.jars.packages={iceberg_packages} "
             f"--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
+            f"--conf spark.sql.adaptive.enabled=true "
+            f"--conf spark.sql.adaptive.coalescePartitions.enabled=true "
+            f"--conf spark.sql.iceberg.handle-timestamp-without-timezone=true "
             f"--conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog "
             f"--conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog "
-            f"--conf spark.sql.catalog.s3tablesbucket.warehouse={s3_tables_arn}"
+            f"--conf spark.sql.catalog.s3tablesbucket.warehouse={s3_tables_arn} "
+            f"--conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
         )
         
         response = emr_client.start_job_run(

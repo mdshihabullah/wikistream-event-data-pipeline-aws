@@ -22,6 +22,8 @@ from pyspark.sql.functions import (
 # Configuration
 # =============================================================================
 
+SCHEMA_VERSION = "1.0.0"  # Track schema version for evolution
+
 # Region to language mapping
 DOMAIN_REGION_MAP = {
     # Asia Pacific
@@ -138,6 +140,7 @@ def transform_bronze_to_silver(df):
         .pipe(clean_user_column)
         .pipe(add_quality_flags)
         .withColumn("silver_processed_at", current_timestamp())
+        .withColumn("schema_version", lit(SCHEMA_VERSION))
         # Select Silver columns
         .select(
             "event_id",
@@ -162,7 +165,8 @@ def transform_bronze_to_silver(df):
             "event_timestamp",
             "bronze_processed_at",
             "silver_processed_at",
-            "event_date"
+            "event_date",
+            "schema_version"
         )
         # Only include valid events
         .filter(col("is_valid") == True)
@@ -180,8 +184,8 @@ def main():
     print(f"Started at: {datetime.utcnow().isoformat()}")
     print("=" * 60)
     
-    # Parse arguments: lookback_hours (default 1 hour)
-    lookback_hours = 1
+    # Parse arguments: lookback_hours (default 24 hours to capture all recent data)
+    lookback_hours = 24
     if len(sys.argv) >= 2:
         lookback_hours = int(sys.argv[1])
     
@@ -224,7 +228,8 @@ def main():
             event_timestamp TIMESTAMP,
             bronze_processed_at TIMESTAMP,
             silver_processed_at TIMESTAMP,
-            event_date STRING
+            event_date STRING,
+            schema_version STRING
         )
         USING iceberg
         PARTITIONED BY (event_date, region)
@@ -234,10 +239,10 @@ def main():
             'write.target-file-size-bytes' = '268435456',
             'write.metadata.delete-after-commit.enabled' = 'true',
             'write.metadata.previous-versions-max' = '10',
-            'format-version' = '2',
-            'write.merge.mode' = 'copy-on-write',
-            'write.delete.mode' = 'copy-on-write',
-            'write.update.mode' = 'copy-on-write'
+            'format-version' = '3',
+            'write.merge.mode' = 'merge-on-read',
+            'write.delete.mode' = 'merge-on-read',
+            'write.update.mode' = 'merge-on-read'
         )
     """)
     
@@ -263,11 +268,36 @@ def main():
     print(f"Incoming Silver records: {incoming_count}")
     
     # MERGE for idempotent upsert (no duplicates on replay)
+    # Note: Iceberg requires explicit column lists, not UPDATE SET * or INSERT *
     merge_result = spark.sql("""
         MERGE INTO s3tablesbucket.silver.cleaned_events AS target
         USING incoming_silver AS source
         ON target.event_id = source.event_id
-        WHEN MATCHED THEN UPDATE SET *
+        WHEN MATCHED THEN UPDATE SET
+            target.event_id = source.event_id,
+            target.rc_id = source.rc_id,
+            target.event_type = source.event_type,
+            target.domain = source.domain,
+            target.region = source.region,
+            target.language = source.language,
+            target.title = source.title,
+            target.namespace = source.namespace,
+            target.user_normalized = source.user_normalized,
+            target.is_bot = source.is_bot,
+            target.is_anonymous = source.is_anonymous,
+            target.length_old = source.length_old,
+            target.length_new = source.length_new,
+            target.length_delta = source.length_delta,
+            target.revision_old = source.revision_old,
+            target.revision_new = source.revision_new,
+            target.is_valid = source.is_valid,
+            target.is_large_deletion = source.is_large_deletion,
+            target.is_large_addition = source.is_large_addition,
+            target.event_timestamp = source.event_timestamp,
+            target.bronze_processed_at = source.bronze_processed_at,
+            target.silver_processed_at = source.silver_processed_at,
+            target.event_date = source.event_date,
+            target.schema_version = source.schema_version
         WHEN NOT MATCHED THEN INSERT *
     """)
     
