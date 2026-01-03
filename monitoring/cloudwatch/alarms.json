@@ -1,0 +1,252 @@
+{
+  "description": "CloudWatch Alarms for WikiStream Pipeline",
+  "alarms": [
+    {
+      "name": "wikistream-msk-cpu-high",
+      "description": "MSK broker CPU utilization exceeds 80%",
+      "namespace": "AWS/Kafka",
+      "metric_name": "CpuUser",
+      "dimensions": {
+        "Cluster Name": "${msk_cluster_name}"
+      },
+      "statistic": "Average",
+      "period": 300,
+      "evaluation_periods": 3,
+      "threshold": 80,
+      "comparison_operator": "GreaterThanThreshold",
+      "alarm_actions": ["${alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "MSK",
+        "Severity": "Warning"
+      }
+    },
+    {
+      "name": "wikistream-msk-disk-high",
+      "description": "MSK broker disk utilization exceeds 80%",
+      "namespace": "AWS/Kafka",
+      "metric_name": "KafkaDataLogsDiskUsed",
+      "dimensions": {
+        "Cluster Name": "${msk_cluster_name}"
+      },
+      "statistic": "Average",
+      "period": 300,
+      "evaluation_periods": 2,
+      "threshold": 80,
+      "comparison_operator": "GreaterThanThreshold",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "MSK",
+        "Severity": "Critical"
+      }
+    },
+    {
+      "name": "wikistream-kafka-lag-critical",
+      "description": "Kafka consumer lag exceeds critical threshold (10000)",
+      "namespace": "AWS/Kafka",
+      "metric_name": "SumOffsetLag",
+      "dimensions": {
+        "Cluster Name": "${msk_cluster_name}",
+        "Consumer Group": "wikistream-bronze-consumer"
+      },
+      "statistic": "Maximum",
+      "period": 300,
+      "evaluation_periods": 2,
+      "threshold": 10000,
+      "comparison_operator": "GreaterThanThreshold",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "Kafka",
+        "Severity": "Critical"
+      }
+    },
+    {
+      "name": "wikistream-kafka-lag-warning",
+      "description": "Kafka consumer lag exceeds warning threshold (5000)",
+      "namespace": "AWS/Kafka",
+      "metric_name": "SumOffsetLag",
+      "dimensions": {
+        "Cluster Name": "${msk_cluster_name}",
+        "Consumer Group": "wikistream-bronze-consumer"
+      },
+      "statistic": "Maximum",
+      "period": 300,
+      "evaluation_periods": 3,
+      "threshold": 5000,
+      "comparison_operator": "GreaterThanThreshold",
+      "alarm_actions": ["${alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "Kafka",
+        "Severity": "Warning"
+      }
+    },
+    {
+      "name": "wikistream-dlq-messages-critical",
+      "description": "DLQ message count exceeds threshold (100)",
+      "namespace": "WikiStream/Pipeline",
+      "metric_name": "DLQMessageCount",
+      "dimensions": {},
+      "statistic": "Sum",
+      "period": 300,
+      "evaluation_periods": 1,
+      "threshold": 100,
+      "comparison_operator": "GreaterThanThreshold",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "Pipeline",
+        "Severity": "Critical"
+      }
+    },
+    {
+      "name": "wikistream-data-quality-failure",
+      "description": "Data quality pass rate below 95%",
+      "namespace": "WikiStream/DataQuality",
+      "metric_name": "QualityPassRate",
+      "dimensions": {
+        "Layer": "all"
+      },
+      "statistic": "Average",
+      "period": 900,
+      "evaluation_periods": 1,
+      "threshold": 95,
+      "comparison_operator": "LessThanThreshold",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "DataQuality",
+        "Severity": "Critical"
+      }
+    },
+    {
+      "name": "wikistream-silver-processing-failed",
+      "description": "Silver layer processing failures detected",
+      "namespace": "WikiStream/Pipeline",
+      "metric_name": "SilverProcessingFailed",
+      "dimensions": {
+        "Layer": "silver"
+      },
+      "statistic": "Sum",
+      "period": 300,
+      "evaluation_periods": 1,
+      "threshold": 1,
+      "comparison_operator": "GreaterThanOrEqualToThreshold",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "Pipeline",
+        "Severity": "Critical"
+      }
+    },
+    {
+      "name": "wikistream-gold-processing-failed",
+      "description": "Gold layer processing failures detected",
+      "namespace": "WikiStream/Pipeline",
+      "metric_name": "GoldProcessingFailed",
+      "dimensions": {
+        "Layer": "gold"
+      },
+      "statistic": "Sum",
+      "period": 300,
+      "evaluation_periods": 1,
+      "threshold": 1,
+      "comparison_operator": "GreaterThanOrEqualToThreshold",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "Pipeline",
+        "Severity": "Critical"
+      }
+    },
+    {
+      "name": "wikistream-bronze-throughput-low",
+      "description": "Bronze layer throughput below expected minimum (100 records/5min)",
+      "namespace": "WikiStream/Pipeline",
+      "metric_name": "BronzeRecordsProcessed",
+      "dimensions": {
+        "Layer": "bronze"
+      },
+      "statistic": "Sum",
+      "period": 300,
+      "evaluation_periods": 3,
+      "threshold": 100,
+      "comparison_operator": "LessThanThreshold",
+      "alarm_actions": ["${alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "breaching",
+      "tags": {
+        "Service": "Pipeline",
+        "Severity": "Warning"
+      }
+    },
+    {
+      "name": "wikistream-processing-latency-critical",
+      "description": "Processing latency exceeds SLA (3 minutes)",
+      "namespace": "WikiStream/Pipeline",
+      "metric_name": "ProcessingLatencyMs",
+      "dimensions": {
+        "Layer": "bronze"
+      },
+      "statistic": "Maximum",
+      "period": 300,
+      "evaluation_periods": 2,
+      "threshold": 180000,
+      "comparison_operator": "GreaterThanThreshold",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "notBreaching",
+      "tags": {
+        "Service": "Pipeline",
+        "Severity": "Critical"
+      }
+    },
+    {
+      "name": "wikistream-airflow-dag-failure",
+      "description": "Airflow DAG run failed",
+      "namespace": "AWS/MWAA",
+      "metric_name": "SchedulerHeartbeat",
+      "dimensions": {
+        "Environment": "${mwaa_environment}"
+      },
+      "statistic": "SampleCount",
+      "period": 300,
+      "evaluation_periods": 3,
+      "threshold": 0,
+      "comparison_operator": "LessThanOrEqualToThreshold",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "treat_missing_data": "breaching",
+      "tags": {
+        "Service": "Airflow",
+        "Severity": "Critical"
+      }
+    }
+  ],
+  "composite_alarms": [
+    {
+      "name": "wikistream-pipeline-unhealthy",
+      "description": "Pipeline is unhealthy - multiple components failing",
+      "alarm_rule": "ALARM(wikistream-kafka-lag-critical) OR ALARM(wikistream-dlq-messages-critical) OR ALARM(wikistream-data-quality-failure)",
+      "alarm_actions": ["${critical_alerts_sns_arn}"],
+      "ok_actions": ["${alerts_sns_arn}"],
+      "tags": {
+        "Service": "Pipeline",
+        "Severity": "Critical"
+      }
+    }
+  ]
+}
+
+
+

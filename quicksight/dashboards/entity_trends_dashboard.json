@@ -1,0 +1,199 @@
+{
+  "dashboard_name": "WikiStream Entity Trends",
+  "description": "Business dashboard showing Wikipedia edit trends, user activity, and content metrics",
+  "version": "1.0.0",
+  "sheets": [
+    {
+      "name": "Overview",
+      "visuals": [
+        {
+          "type": "KPI",
+          "title": "Total Events (24h)",
+          "dataset": "wikistream_hourly_statistics",
+          "measure": "SUM(total_events)",
+          "filter": "stat_date >= date_add('day', -1, current_date)",
+          "comparison": {
+            "period": "PRIOR_PERIOD",
+            "type": "PERCENT_DIFFERENCE"
+          }
+        },
+        {
+          "type": "KPI",
+          "title": "Unique Users (24h)",
+          "dataset": "wikistream_hourly_statistics",
+          "measure": "SUM(unique_users)",
+          "filter": "stat_date >= date_add('day', -1, current_date)",
+          "comparison": {
+            "period": "PRIOR_PERIOD",
+            "type": "PERCENT_DIFFERENCE"
+          }
+        },
+        {
+          "type": "KPI",
+          "title": "Net Content Change (KB)",
+          "dataset": "wikistream_hourly_statistics",
+          "measure": "SUM(net_bytes_change) / 1024",
+          "filter": "stat_date >= date_add('day', -1, current_date)",
+          "format": "NUMBER_WITH_SIGN"
+        },
+        {
+          "type": "KPI",
+          "title": "High Risk Alerts",
+          "dataset": "wikistream_risk_scores",
+          "measure": "COUNT(alert_id)",
+          "filter": "risk_level IN ('critical', 'high') AND stat_date >= date_add('day', -1, current_date)",
+          "threshold": {
+            "warning": 10,
+            "critical": 50
+          }
+        },
+        {
+          "type": "LINE_CHART",
+          "title": "Event Volume Over Time",
+          "dataset": "wikistream_hourly_statistics",
+          "x_axis": "datetime",
+          "y_axis": "SUM(total_events)",
+          "series": "domain",
+          "filter": "stat_date >= date_add('day', -7, current_date)"
+        },
+        {
+          "type": "BAR_CHART",
+          "title": "Events by Domain",
+          "dataset": "wikistream_hourly_statistics",
+          "x_axis": "domain",
+          "y_axis": "SUM(total_events)",
+          "sort": "DESCENDING",
+          "filter": "stat_date >= date_add('day', -1, current_date)"
+        },
+        {
+          "type": "PIE_CHART",
+          "title": "Event Type Distribution",
+          "dataset": "wikistream_hourly_statistics",
+          "dimension": "region",
+          "measure": "SUM(total_events)",
+          "filter": "stat_date >= date_add('day', -1, current_date)"
+        },
+        {
+          "type": "DONUT_CHART",
+          "title": "Bot vs Human Activity",
+          "dataset": "wikistream_hourly_statistics",
+          "slices": [
+            {"label": "Bot Edits", "measure": "SUM(unique_bots)"},
+            {"label": "Human Edits", "measure": "SUM(unique_humans)"}
+          ],
+          "filter": "stat_date >= date_add('day', -1, current_date)"
+        }
+      ]
+    },
+    {
+      "name": "Domain Analysis",
+      "visuals": [
+        {
+          "type": "HEAT_MAP",
+          "title": "Activity by Domain and Hour",
+          "dataset": "wikistream_hourly_statistics",
+          "rows": "domain",
+          "columns": "stat_hour",
+          "values": "SUM(total_events)",
+          "filter": "stat_date >= date_add('day', -7, current_date)"
+        },
+        {
+          "type": "LINE_CHART",
+          "title": "Edits per User Trend",
+          "dataset": "wikistream_hourly_statistics",
+          "x_axis": "datetime",
+          "y_axis": "AVG(edits_per_user)",
+          "series": "domain",
+          "filter": "stat_date >= date_add('day', -7, current_date)"
+        },
+        {
+          "type": "STACKED_BAR_CHART",
+          "title": "Content Changes by Domain",
+          "dataset": "wikistream_hourly_statistics",
+          "x_axis": "stat_date",
+          "y_axis": ["SUM(bytes_added)", "SUM(bytes_removed)"],
+          "group_by": "domain",
+          "filter": "stat_date >= date_add('day', -7, current_date)"
+        },
+        {
+          "type": "TABLE",
+          "title": "Domain Statistics",
+          "dataset": "wikistream_hourly_statistics",
+          "columns": [
+            {"field": "domain", "label": "Domain"},
+            {"field": "SUM(total_events)", "label": "Total Events"},
+            {"field": "SUM(unique_users)", "label": "Unique Users"},
+            {"field": "AVG(bot_percentage)", "label": "Bot %", "format": "PERCENT"},
+            {"field": "SUM(net_bytes_change)/1024", "label": "Net KB Change"}
+          ],
+          "filter": "stat_date >= date_add('day', -1, current_date)",
+          "sort": {"field": "SUM(total_events)", "direction": "DESCENDING"}
+        }
+      ]
+    },
+    {
+      "name": "User Patterns",
+      "visuals": [
+        {
+          "type": "BAR_CHART",
+          "title": "Top Contributors",
+          "dataset": "wikistream_user_metrics",
+          "x_axis": "user",
+          "y_axis": "SUM(total_actions)",
+          "filter": "stat_date >= date_add('day', -1, current_date) AND user_type = 'registered'",
+          "limit": 20,
+          "sort": "DESCENDING"
+        },
+        {
+          "type": "SCATTER_PLOT",
+          "title": "User Activity vs Edit Size",
+          "dataset": "wikistream_user_metrics",
+          "x_axis": "total_actions",
+          "y_axis": "total_bytes_contributed",
+          "size": "unique_pages_edited",
+          "color": "user_type",
+          "filter": "stat_date >= date_add('day', -1, current_date)"
+        },
+        {
+          "type": "LINE_CHART",
+          "title": "Anonymous vs Registered Activity",
+          "dataset": "wikistream_hourly_statistics",
+          "x_axis": "datetime",
+          "y_axis": ["SUM(anonymous_edits)", "SUM(registered_edits)"],
+          "filter": "stat_date >= date_add('day', -7, current_date)"
+        }
+      ]
+    }
+  ],
+  "parameters": [
+    {
+      "name": "DateRange",
+      "type": "DATE_RANGE",
+      "default": {
+        "start": "date_add('day', -7, current_date)",
+        "end": "current_date"
+      }
+    },
+    {
+      "name": "DomainFilter",
+      "type": "MULTI_SELECT",
+      "dataset": "wikistream_hourly_statistics",
+      "field": "domain",
+      "default": "ALL"
+    },
+    {
+      "name": "RegionFilter",
+      "type": "MULTI_SELECT",
+      "dataset": "wikistream_hourly_statistics",
+      "field": "region",
+      "default": "ALL"
+    }
+  ],
+  "refresh": {
+    "auto_refresh": true,
+    "interval_minutes": 5
+  }
+}
+
+
+

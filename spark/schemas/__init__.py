@@ -1,0 +1,59 @@
+"""
+WikiStream Schema Definitions
+=============================
+Pyspark schemas for Bronze, Silver, and Gold layers.
+"""
+
+from .bronze_schema import (
+    BRONZE_TABLE_SCHEMA,
+    RECENTCHANGE_DATA_SCHEMA,
+    DLQ_SCHEMA,
+    BRONZE_TABLE_DDL,
+    DLQ_TABLE_DDL,
+)
+
+from .silver_schema import (
+    SILVER_EVENTS_SCHEMA,
+    SILVER_USER_ACTIVITY_SCHEMA,
+    NAMESPACE_MAPPING,
+    SILVER_EVENTS_DDL,
+    SILVER_USER_ACTIVITY_DDL,
+)
+
+from .gold_schema import (
+    GOLD_HOURLY_STATS_SCHEMA,
+    GOLD_USER_METRICS_SCHEMA,
+    GOLD_RISK_SCORES_SCHEMA,
+    GOLD_DOMAIN_TRENDS_SCHEMA,
+    GOLD_HOURLY_STATS_DDL,
+    GOLD_RISK_SCORES_DDL,
+    GOLD_DOMAIN_TRENDS_DDL,
+    GOLD_USER_METRICS_DDL,
+)
+
+__all__ = [
+    # Bronze
+    "BRONZE_TABLE_SCHEMA",
+    "RECENTCHANGE_DATA_SCHEMA",
+    "DLQ_SCHEMA",
+    "BRONZE_TABLE_DDL",
+    "DLQ_TABLE_DDL",
+    # Silver
+    "SILVER_EVENTS_SCHEMA",
+    "SILVER_USER_ACTIVITY_SCHEMA",
+    "NAMESPACE_MAPPING",
+    "SILVER_EVENTS_DDL",
+    "SILVER_USER_ACTIVITY_DDL",
+    # Gold
+    "GOLD_HOURLY_STATS_SCHEMA",
+    "GOLD_USER_METRICS_SCHEMA",
+    "GOLD_RISK_SCORES_SCHEMA",
+    "GOLD_DOMAIN_TRENDS_SCHEMA",
+    "GOLD_HOURLY_STATS_DDL",
+    "GOLD_RISK_SCORES_DDL",
+    "GOLD_DOMAIN_TRENDS_DDL",
+    "GOLD_USER_METRICS_DDL",
+]
+
+
+

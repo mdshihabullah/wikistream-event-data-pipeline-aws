@@ -1,0 +1,74 @@
+{
+  "dataset_name": "wikistream_hourly_statistics",
+  "description": "Hourly aggregated statistics from Gold layer for WikiStream pipeline. Directly queryable via Athena using S3 Tables Iceberg integration.",
+  "data_source": {
+    "type": "ATHENA",
+    "catalog": "s3tablescatalog",
+    "database": "s3tablesbucket.gold",
+    "table": "hourly_stats",
+    "workgroup": "primary"
+  },
+  "physical_table": {
+    "columns": [
+      {"name": "stat_date", "type": "STRING", "description": "Event date (YYYY-MM-DD)"},
+      {"name": "stat_hour", "type": "INTEGER", "description": "Hour of day (0-23)"},
+      {"name": "domain", "type": "STRING", "description": "Wikipedia domain"},
+      {"name": "region", "type": "STRING", "description": "Geographic region"},
+      {"name": "total_events", "type": "INTEGER", "description": "Total events in the hour"},
+      {"name": "unique_users", "type": "INTEGER", "description": "Distinct users"},
+      {"name": "unique_pages", "type": "INTEGER", "description": "Distinct pages edited"},
+      {"name": "bytes_added", "type": "INTEGER", "description": "Total bytes added"},
+      {"name": "bytes_removed", "type": "INTEGER", "description": "Total bytes removed"},
+      {"name": "avg_edit_size", "type": "DECIMAL", "description": "Average edit size in bytes"},
+      {"name": "bot_edits", "type": "INTEGER", "description": "Edits by bots"},
+      {"name": "human_edits", "type": "INTEGER", "description": "Edits by humans"},
+      {"name": "bot_percentage", "type": "DECIMAL", "description": "Percentage of bot edits"},
+      {"name": "anonymous_edits", "type": "INTEGER", "description": "Edits by anonymous users"},
+      {"name": "type_edit", "type": "INTEGER", "description": "Edit type count"},
+      {"name": "type_new", "type": "INTEGER", "description": "New page count"},
+      {"name": "type_categorize", "type": "INTEGER", "description": "Categorize type count"},
+      {"name": "type_log", "type": "INTEGER", "description": "Log type count"},
+      {"name": "large_deletions", "type": "INTEGER", "description": "Count of large deletions (>5KB)"},
+      {"name": "large_additions", "type": "INTEGER", "description": "Count of large additions (>50KB)"},
+      {"name": "gold_processed_at", "type": "DATETIME", "description": "Processing timestamp"}
+    ]
+  },
+  "logical_table": {
+    "calculated_fields": [
+      {
+        "name": "datetime",
+        "expression": "parseDate(concat({stat_date}, ' ', toString({stat_hour}), ':00:00'), 'yyyy-MM-dd HH:mm:ss')"
+      },
+      {
+        "name": "human_edit_percentage",
+        "expression": "100 - {bot_percentage}"
+      },
+      {
+        "name": "net_bytes_change",
+        "expression": "{bytes_added} - {bytes_removed}"
+      },
+      {
+        "name": "net_kb_change",
+        "expression": "({bytes_added} - {bytes_removed}) / 1024"
+      },
+      {
+        "name": "edits_per_user",
+        "expression": "ifelse({unique_users} > 0, {total_events} / {unique_users}, 0)"
+      }
+    ],
+    "filters": [],
+    "data_transforms": []
+  },
+  "permissions": {
+    "principals": ["arn:aws:quicksight:us-east-1:${account_id}:group/default/wikistream-analysts"],
+    "actions": ["quicksight:DescribeDataSet", "quicksight:PassDataSet"]
+  },
+  "refresh_schedule": {
+    "interval": "HOURLY",
+    "start_after_datetime": "2024-01-01T00:00:00Z",
+    "timezone": "UTC"
+  }
+}
+
+
+

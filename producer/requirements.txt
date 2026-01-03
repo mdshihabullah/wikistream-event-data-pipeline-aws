@@ -1,0 +1,18 @@
+# WikiStream Producer Dependencies
+# =================================
+
+# Kafka client - Confluent's high-performance librdkafka wrapper
+confluent-kafka>=2.6.0
+
+# AWS MSK IAM authentication
+aws-msk-iam-sasl-signer-python>=1.0.1
+
+# SSE client for Wikimedia EventStreams
+sseclient-py>=1.8.0
+
+# HTTP client
+requests>=2.32.0
+
+# AWS SDK (for IAM credential resolution)
+boto3>=1.35.0
+botocore>=1.35.0

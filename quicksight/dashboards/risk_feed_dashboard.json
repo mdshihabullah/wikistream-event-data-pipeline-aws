@@ -1,0 +1,219 @@
+{
+  "dashboard_name": "WikiStream Risk Feed",
+  "description": "Security and risk monitoring dashboard with evidence-based alerts",
+  "version": "1.0.0",
+  "sheets": [
+    {
+      "name": "Risk Overview",
+      "visuals": [
+        {
+          "type": "KPI",
+          "title": "Critical Alerts (24h)",
+          "dataset": "wikistream_risk_scores",
+          "measure": "COUNT(DISTINCT alert_id)",
+          "filter": "risk_level = 'critical' AND stat_date >= date_add('day', -1, current_date)",
+          "color": "RED"
+        },
+        {
+          "type": "KPI",
+          "title": "High Risk Alerts (24h)",
+          "dataset": "wikistream_risk_scores",
+          "measure": "COUNT(DISTINCT alert_id)",
+          "filter": "risk_level = 'high' AND stat_date >= date_add('day', -1, current_date)",
+          "color": "ORANGE"
+        },
+        {
+          "type": "KPI",
+          "title": "Average Risk Score",
+          "dataset": "wikistream_risk_scores",
+          "measure": "AVG(risk_score)",
+          "filter": "stat_date >= date_add('day', -1, current_date)",
+          "format": "PERCENT"
+        },
+        {
+          "type": "KPI",
+          "title": "High-Risk Users",
+          "dataset": "wikistream_risk_scores",
+          "measure": "COUNT(DISTINCT entity_id)",
+          "filter": "risk_level IN ('critical', 'high') AND stat_date >= date_add('day', -1, current_date)"
+        },
+        {
+          "type": "LINE_CHART",
+          "title": "Risk Score Trend",
+          "dataset": "wikistream_risk_scores",
+          "x_axis": "datetime",
+          "y_axis": "AVG(risk_score)",
+          "series": "risk_level",
+          "filter": "stat_date >= date_add('day', -7, current_date)"
+        },
+        {
+          "type": "STACKED_BAR_CHART",
+          "title": "Risk Level Distribution Over Time",
+          "dataset": "wikistream_risk_scores",
+          "x_axis": "stat_date",
+          "y_axis": "COUNT(entity_id)",
+          "stack_by": "risk_level",
+          "colors": {
+            "critical": "#dc3545",
+            "high": "#fd7e14",
+            "medium": "#ffc107",
+            "low": "#28a745"
+          },
+          "filter": "stat_date >= date_add('day', -7, current_date)"
+        },
+        {
+          "type": "PIE_CHART",
+          "title": "Primary Risk Factors",
+          "dataset": "wikistream_risk_scores",
+          "dimension": "primary_risk_factor",
+          "measure": "COUNT(entity_id)",
+          "filter": "risk_level IN ('critical', 'high') AND stat_date >= date_add('day', -1, current_date)"
+        }
+      ]
+    },
+    {
+      "name": "Alert Feed",
+      "description": "Real-time feed of risk alerts with evidence fields",
+      "visuals": [
+        {
+          "type": "TABLE",
+          "title": "Recent High-Risk Alerts",
+          "dataset": "wikistream_risk_scores",
+          "columns": [
+            {"field": "alert_timestamp", "label": "Time", "format": "DATETIME"},
+            {"field": "entity_id", "label": "User"},
+            {"field": "risk_level", "label": "Risk Level", "conditional_format": {
+              "critical": {"background": "#dc3545", "text": "white"},
+              "high": {"background": "#fd7e14", "text": "white"}
+            }},
+            {"field": "risk_score", "label": "Score", "format": "PERCENT"},
+            {"field": "recent_actions_count", "label": "Actions"},
+            {"field": "velocity_score", "label": "Velocity"},
+            {"field": "deletion_score", "label": "Deletion"},
+            {"field": "cross_wiki_score", "label": "Cross-Wiki"},
+            {"field": "affected_pages", "label": "Affected Pages"},
+            {"field": "alert_id", "label": "Alert ID"}
+          ],
+          "filter": "alert_triggered = true AND stat_date >= date_add('day', -1, current_date)",
+          "sort": {"field": "alert_timestamp", "direction": "DESCENDING"},
+          "pagination": {
+            "page_size": 50
+          },
+          "actions": [
+            {
+              "type": "URL_ACTION",
+              "label": "Investigate",
+              "url_template": "https://en.wikipedia.org/wiki/Special:Contributions/<<entity_id>>"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Risk Factor Analysis",
+      "visuals": [
+        {
+          "type": "HEAT_MAP",
+          "title": "Risk Factors by Domain",
+          "dataset": "wikistream_risk_scores",
+          "rows": "domain",
+          "columns": ["velocity_score", "deletion_score", "cross_wiki_score", "anonymous_score"],
+          "values": "AVG",
+          "filter": "stat_date >= date_add('day', -1, current_date)"
+        },
+        {
+          "type": "BAR_CHART",
+          "title": "High-Risk Users by Action Count",
+          "dataset": "wikistream_risk_scores",
+          "x_axis": "entity_id",
+          "y_axis": "SUM(recent_actions_count)",
+          "filter": "risk_level IN ('critical', 'high') AND stat_date >= date_add('day', -1, current_date)",
+          "limit": 20,
+          "sort": "DESCENDING"
+        },
+        {
+          "type": "SCATTER_PLOT",
+          "title": "Velocity vs Deletion Score",
+          "dataset": "wikistream_risk_scores",
+          "x_axis": "velocity_score",
+          "y_axis": "deletion_score",
+          "size": "recent_actions_count",
+          "color": "risk_level",
+          "filter": "stat_date >= date_add('day', -1, current_date)"
+        },
+        {
+          "type": "BOX_PLOT",
+          "title": "Risk Score Distribution by Hour",
+          "dataset": "wikistream_risk_scores",
+          "x_axis": "stat_hour",
+          "y_axis": "risk_score",
+          "filter": "stat_date >= date_add('day', -7, current_date)"
+        }
+      ]
+    },
+    {
+      "name": "Evidence Details",
+      "description": "Detailed evidence for investigation",
+      "visuals": [
+        {
+          "type": "DETAIL_VIEW",
+          "title": "Alert Evidence",
+          "dataset": "wikistream_risk_scores",
+          "fields": [
+            {"field": "entity_id", "label": "User"},
+            {"field": "risk_level", "label": "Risk Level"},
+            {"field": "risk_score", "label": "Overall Score", "format": "PERCENT"},
+            {"field": "velocity_score", "label": "Velocity Factor", "format": "PERCENT"},
+            {"field": "deletion_score", "label": "Deletion Factor", "format": "PERCENT"},
+            {"field": "cross_wiki_score", "label": "Cross-Wiki Factor", "format": "PERCENT"},
+            {"field": "anonymous_score", "label": "Anonymous Factor", "format": "PERCENT"},
+            {"field": "recent_actions_count", "label": "Recent Actions"},
+            {"field": "affected_pages", "label": "Affected Pages", "type": "JSON_LIST"},
+            {"field": "sample_comments", "label": "Sample Edit Comments", "type": "JSON_LIST"},
+            {"field": "evidence", "label": "Evidence Details", "type": "JSON"}
+          ],
+          "filter": "alert_triggered = true"
+        }
+      ]
+    }
+  ],
+  "parameters": [
+    {
+      "name": "DateRange",
+      "type": "DATE_RANGE",
+      "default": {
+        "start": "date_add('day', -7, current_date)",
+        "end": "current_date"
+      }
+    },
+    {
+      "name": "RiskLevelFilter",
+      "type": "MULTI_SELECT",
+      "options": ["critical", "high", "medium", "low"],
+      "default": ["critical", "high"]
+    },
+    {
+      "name": "MinRiskScore",
+      "type": "DECIMAL",
+      "default": 0.5,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "alerts": [
+    {
+      "name": "Critical Risk Alert",
+      "condition": "COUNT(alert_id) WHERE risk_level = 'critical' AND stat_date = current_date > 0",
+      "action": "SNS_NOTIFICATION",
+      "topic_arn": "${alerts_sns_arn}",
+      "message_template": "CRITICAL: {{count}} critical risk alerts detected. Immediate investigation required."
+    }
+  ],
+  "refresh": {
+    "auto_refresh": true,
+    "interval_minutes": 5
+  }
+}
+
+
+

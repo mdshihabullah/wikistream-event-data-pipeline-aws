@@ -1,0 +1,18 @@
+# WikiStream Spark Jobs Dependencies
+# ==================================
+# These are installed on EMR Serverless via --packages or bootstrap
+
+# Core Spark dependencies (provided by EMR)
+# pyspark==3.5.0
+
+# Data Quality (Deequ)
+pydeequ>=1.2.0
+
+# AWS SDK
+boto3>=1.35.0
+
+# Note: Iceberg dependencies are included in EMR 7.5.0 release
+# The following are provided by EMR Serverless:
+# - org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.7.0
+# - software.amazon.awssdk:glue:2.x
+# - software.amazon.awssdk:s3:2.x

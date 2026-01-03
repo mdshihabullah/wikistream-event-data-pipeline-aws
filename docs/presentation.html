@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WikiStream - Real-Time Wikipedia Analytics</title>
+    
+    <!-- Reveal.js CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/night.css">
+    
+    <!-- Custom Styles -->
+    <style>
+        :root {
+            --r-background-color: #0a0a1a;
+            --r-main-color: #e8e8e8;
+            --r-heading-color: #00d4ff;
+            --r-link-color: #00d4ff;
+            --accent-orange: #ff6b35;
+            --accent-green: #00c853;
+            --accent-purple: #9c27b0;
+        }
+        
+        .reveal {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        
+        .reveal h1, .reveal h2, .reveal h3 {
+            text-transform: none;
+            font-weight: 600;
+        }
+        
+        .reveal h1 {
+            font-size: 2.5em;
+            background: linear-gradient(135deg, #00d4ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .reveal h2 {
+            color: var(--r-heading-color);
+            font-size: 1.8em;
+        }
+        
+        .slide-title {
+            position: absolute;
+            top: 5%;
+            left: 5%;
+            font-size: 0.6em;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        .highlight {
+            color: var(--accent-orange);
+            font-weight: bold;
+        }
+        
+        .highlight-green {
+            color: var(--accent-green);
+            font-weight: bold;
+        }
+        
+        .stat-box {
+            display: inline-block;
+            background: linear-gradient(135deg, rgba(0,212,255,0.1), rgba(0,255,136,0.1));
+            border: 1px solid rgba(0,212,255,0.3);
+            border-radius: 12px;
+            padding: 20px 30px;
+            margin: 10px;
+            text-align: center;
+        }
+        
+        .stat-box .number {
+            font-size: 2.5em;
+            font-weight: bold;
+            background: linear-gradient(135deg, #00d4ff, #00ff88);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .stat-box .label {
+            font-size: 0.8em;
+            color: #888;
+            margin-top: 5px;
+        }
+        
+        .tech-stack {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 30px;
+        }
+        
+        .tech-item {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 15px 25px;
+            font-size: 0.7em;
+            transition: all 0.3s ease;
+        }
+        
+        .tech-item:hover {
+            background: rgba(0,212,255,0.1);
+            border-color: var(--r-heading-color);
+            transform: translateY(-5px);
+        }
+        
+        .architecture-flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .arch-box {
+            background: linear-gradient(135deg, rgba(0,212,255,0.15), rgba(0,212,255,0.05));
+            border: 1px solid rgba(0,212,255,0.4);
+            border-radius: 10px;
+            padding: 20px;
+            min-width: 150px;
+            text-align: center;
+        }
+        
+        .arch-box.orange {
+            background: linear-gradient(135deg, rgba(255,107,53,0.15), rgba(255,107,53,0.05));
+            border-color: rgba(255,107,53,0.4);
+        }
+        
+        .arch-box.green {
+            background: linear-gradient(135deg, rgba(0,200,83,0.15), rgba(0,200,83,0.05));
+            border-color: rgba(0,200,83,0.4);
+        }
+        
+        .arch-box.purple {
+            background: linear-gradient(135deg, rgba(156,39,176,0.15), rgba(156,39,176,0.05));
+            border-color: rgba(156,39,176,0.4);
+        }
+        
+        .arch-arrow {
+            font-size: 1.5em;
+            color: #666;
+        }
+        
+        .medallion {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin: 30px 0;
+        }
+        
+        .medal {
+            text-align: center;
+            padding: 25px;
+            border-radius: 15px;
+            width: 200px;
+        }
+        
+        .medal.bronze {
+            background: linear-gradient(135deg, #cd7f32, #8b4513);
+        }
+        
+        .medal.silver {
+            background: linear-gradient(135deg, #c0c0c0, #808080);
+        }
+        
+        .medal.gold {
+            background: linear-gradient(135deg, #ffd700, #daa520);
+            color: #000;
+        }
+        
+        .medal h4 {
+            margin: 0 0 10px 0;
+            font-size: 1.2em;
+        }
+        
+        .medal p {
+            margin: 0;
+            font-size: 0.7em;
+            opacity: 0.9;
+        }
+        
+        .cost-table {
+            width: 80%;
+            margin: 20px auto;
+            border-collapse: collapse;
+            font-size: 0.7em;
+        }
+        
+        .cost-table th, .cost-table td {
+            padding: 12px 20px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .cost-table th {
+            background: rgba(0,212,255,0.1);
+            color: var(--r-heading-color);
+        }
+        
+        .cost-table tr:hover {
+            background: rgba(255,255,255,0.02);
+        }
+        
+        .total-row {
+            font-weight: bold;
+            background: rgba(0,200,83,0.1) !important;
+        }
+        
+        .checklist {
+            text-align: left;
+            max-width: 850px;
+            margin: 0 auto;
+            padding-left: 20px;
+        }
+        
+        .checklist li {
+            margin: 12px 0;
+            list-style: none;
+            font-size: 0.75em;
+            padding-left: 25px;
+            text-indent: -25px;
+        }
+        
+        .checklist li::before {
+            content: "✓";
+            color: var(--accent-green);
+            font-weight: bold;
+            margin-right: 12px;
+            display: inline-block;
+            width: 15px;
+        }
+        
+        .footer-note {
+            position: absolute;
+            bottom: 5%;
+            width: 100%;
+            text-align: center;
+            font-size: 0.5em;
+            color: #555;
+        }
+        
+        .two-column {
+            display: flex;
+            gap: 40px;
+            align-items: flex-start;
+        }
+        
+        .two-column > div {
+            flex: 1;
+        }
+        
+        .flow-diagram {
+            font-family: monospace;
+            font-size: 0.6em;
+            text-align: left;
+            background: rgba(0,0,0,0.3);
+            padding: 20px;
+            border-radius: 10px;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <div class="reveal">
+        <div class="slides">
+            
+            <!-- Slide 1: Title -->
+            <section data-transition="zoom">
+                <h1>WikiStream</h1>
+                <p style="font-size: 1.2em; color: #888; margin-top: -10px;">
+                    Real-Time Wikipedia Edit Analytics Platform
+                </p>
+                
+                <div style="margin-top: 60px;">
+                    <div class="stat-box">
+                        <div class="number">500+</div>
+                        <div class="label">Edits/Minute</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="number">300+</div>
+                        <div class="label">Languages</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="number">&lt;5min</div>
+                        <div class="label">End-to-End Latency</div>
+                    </div>
+                </div>
+                
+                <p class="footer-note">Data Engineering Portfolio Project • AWS Cloud</p>
+            </section>
+            
+            <!-- Slide 2: Problem -->
+            <section data-transition="slide">
+                <span class="slide-title">The Challenge</span>
+                <h2>Why Wikipedia Edit Analytics?</h2>
+                
+                <div class="two-column" style="margin-top: 40px;">
+                    <div>
+                        <h3 style="color: var(--accent-orange); font-size: 0.9em;">📊 Content Monitoring</h3>
+                        <ul style="font-size: 0.65em; color: #aaa;">
+                            <li>Track edit velocity across wikis</li>
+                            <li>Identify trending articles</li>
+                            <li>Monitor bot vs human activity</li>
+                        </ul>
+                        
+                        <h3 style="color: var(--accent-orange); font-size: 0.9em; margin-top: 30px;">🛡️ Risk Detection</h3>
+                        <ul style="font-size: 0.65em; color: #aaa;">
+                            <li>Rapid edit patterns (potential vandalism)</li>
+                            <li>Large content deletions</li>
+                            <li>Cross-wiki suspicious activity</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 style="color: var(--accent-green); font-size: 0.9em;">🎯 Target Domains</h3>
+                        <div style="font-size: 0.6em; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; margin-top: 10px;">
+                            <strong>High Activity:</strong><br>
+                            en • de • ja • fr • zh • es • ru<br><br>
+                            <strong>Regional Coverage:</strong><br>
+                            Asia-Pacific • Europe • Americas • Middle East
+                        </div>
+                        
+                        <div style="margin-top: 30px; padding: 15px; background: rgba(0,212,255,0.1); border-radius: 8px; font-size: 0.6em;">
+                            <strong>Data Source:</strong><br>
+                            Wikimedia EventStreams (SSE)<br>
+                            <code style="color: #888;">stream.wikimedia.org/v2/stream/recentchange</code>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Slide 3: Architecture Overview -->
+            <section data-transition="slide">
+                <span class="slide-title">Solution</span>
+                <h2>Architecture Overview</h2>
+                
+                <div class="architecture-flow" style="margin-top: 40px;">
+                    <div class="arch-box">
+                        <div style="font-size: 1.5em;">📡</div>
+                        <div style="font-size: 0.7em; margin-top: 5px;">Wikimedia<br>SSE Stream</div>
+                    </div>
+                    <div class="arch-arrow">→</div>
+                    <div class="arch-box orange">
+                        <div style="font-size: 1.5em;">🐳</div>
+                        <div style="font-size: 0.7em; margin-top: 5px;">ECS Fargate<br>Producer</div>
+                    </div>
+                    <div class="arch-arrow">→</div>
+                    <div class="arch-box">
+                        <div style="font-size: 1.5em;">📨</div>
+                        <div style="font-size: 0.7em; margin-top: 5px;">MSK Kafka<br>(KRaft)</div>
+                    </div>
+                    <div class="arch-arrow">→</div>
+                    <div class="arch-box green">
+                        <div style="font-size: 1.5em;">⚡</div>
+                        <div style="font-size: 0.7em; margin-top: 5px;">EMR<br>Serverless</div>
+                    </div>
+                    <div class="arch-arrow">→</div>
+                    <div class="arch-box purple">
+                        <div style="font-size: 1.5em;">🧊</div>
+                        <div style="font-size: 0.7em; margin-top: 5px;">S3 Tables<br>(Iceberg)</div>
+                    </div>
+                </div>
+                
+                <div class="medallion">
+                    <div class="medal bronze">
+                        <h4>Bronze</h4>
+                        <p>Raw Events<br>As-is from Kafka</p>
+                    </div>
+                    <div class="medal silver">
+                        <h4>Silver</h4>
+                        <p>Cleaned & Enriched<br>Deduplicated</p>
+                    </div>
+                    <div class="medal gold">
+                        <h4>Gold</h4>
+                        <p>Aggregated<br>Business-Ready</p>
+                    </div>
+                </div>
+                
+                <p style="font-size: 0.6em; color: #666; margin-top: 20px;">
+                    Medallion Architecture • Step Functions Orchestration • Deequ Quality Checks • ≤5 min SLA
+                </p>
+            </section>
+            
+            <!-- Slide 4: Tech Stack -->
+            <section data-transition="slide">
+                <span class="slide-title">Technology</span>
+                <h2>Why These Tools?</h2>
+                
+                <table class="cost-table" style="font-size: 0.55em;">
+                    <tr>
+                        <th style="width: 20%;">Component</th>
+                        <th style="width: 25%;">Choice</th>
+                        <th style="width: 55%;">Rationale</th>
+                    </tr>
+                    <tr>
+                        <td><strong>Message Queue</strong></td>
+                        <td>MSK (Kafka 3.9 + KRaft)</td>
+                        <td>No Zookeeper • IAM auth • DLQ for failures</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Producer</strong></td>
+                        <td>ECS Fargate</td>
+                        <td>Long-running SSE • Auto-restart • Pay-per-second</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Processing</strong></td>
+                        <td>EMR Serverless</td>
+                        <td><span class="highlight-green">Zero idle cost</span> • Watermarks • MERGE upserts</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Storage</strong></td>
+                        <td>S3 Tables (Iceberg)</td>
+                        <td>ACID • Time-travel • Schema evolution</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Orchestration</strong></td>
+                        <td>Step Functions</td>
+                        <td><span class="highlight-green">90% cheaper than MWAA</span> • CloudWatch metrics</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Data Quality</strong></td>
+                        <td>Deequ + SNS</td>
+                        <td>Automated checks • Evidence-rich alerts</td>
+                    </tr>
+                </table>
+                
+                <div style="margin-top: 25px; font-size: 0.55em; color: #888;">
+                    <strong>Key Design Decisions:</strong><br>
+                    ✓ KRaft over Zookeeper (simpler) &nbsp;•&nbsp;
+                    ✓ Step Functions over Airflow (cost) &nbsp;•&nbsp;
+                    ✓ Fargate over Lambda (no timeout)
+                </div>
+            </section>
+            
+            <!-- Slide 5: Cost & Scalability -->
+            <section data-transition="slide">
+                <span class="slide-title">Economics</span>
+                <h2>Cost-Optimized Design</h2>
+                
+                <div class="two-column">
+                    <div>
+                        <h3 style="font-size: 0.9em; color: var(--accent-green);">💰 Portfolio Costs</h3>
+                        <table class="cost-table" style="width: 100%; font-size: 0.55em;">
+                            <tr><td>MSK (2× t3.small)</td><td style="text-align: right;">$60</td></tr>
+                            <tr><td>ECS Fargate (24/7)</td><td style="text-align: right;">$10</td></tr>
+                            <tr><td>EMR Serverless</td><td style="text-align: right;">$20</td></tr>
+                            <tr><td>S3 + S3 Tables</td><td style="text-align: right;">$3</td></tr>
+                            <tr><td>NAT Gateway</td><td style="text-align: right;">$35</td></tr>
+                            <tr><td>Other (logs, etc.)</td><td style="text-align: right;">$7</td></tr>
+                            <tr class="total-row"><td><strong>Monthly Total</strong></td><td style="text-align: right;"><strong>~$135</strong></td></tr>
+                        </table>
+                    </div>
+                    <div>
+                        <h3 style="font-size: 0.9em; color: var(--accent-orange);">📈 Scaling Path</h3>
+                        <div style="font-size: 0.6em; text-align: left; background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px;">
+                            <p><strong>10× Throughput:</strong></p>
+                            <ul style="margin: 10px 0;">
+                                <li>MSK: Add partitions</li>
+                                <li>EMR: Auto-scales workers</li>
+                                <li>S3 Tables: Unlimited</li>
+                            </ul>
+                            <p><strong>Production Hardening:</strong></p>
+                            <ul style="margin: 10px 0;">
+                                <li>Multi-AZ deployment</li>
+                                <li>3 Kafka brokers</li>
+                                <li>Enhanced monitoring</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <p style="font-size: 0.55em; color: #666; margin-top: 20px;">
+                    * Costs based on us-east-1 pricing • EMR Serverless = $0 when idle
+                </p>
+            </section>
+            
+            <!-- Slide 6: Demo & Outcomes -->
+            <section data-transition="zoom">
+                <span class="slide-title">Results</span>
+                <h2>Outcomes & Deliverables</h2>
+                
+                <ul class="checklist">
+                    <li><strong>Real-time Ingestion:</strong> Kafka topics with DLQ capturing malformed records</li>
+                    <li><strong>Medallion Architecture:</strong> Bronze/Silver/Gold tables queryable via Athena</li>
+                    <li><strong>Idempotent Processing:</strong> MERGE INTO with deterministic event_id (no duplicates)</li>
+                    <li><strong>Late Event Handling:</strong> 5-minute watermark for out-of-order events</li>
+                    <li><strong>Data Quality:</strong> Deequ checks every 15min with evidence-rich SNS alerts</li>
+                    <li><strong>Dashboards:</strong> QuickSight (analytics) + Grafana (operations)</li>
+                </ul>
+                
+                <div style="margin-top: 40px; display: flex; justify-content: center; gap: 30px;">
+                    <div class="stat-box">
+                        <div class="number">≤2min</div>
+                        <div class="label">Bronze Latency</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="number">99%+</div>
+                        <div class="label">Data Quality</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="number">$135</div>
+                        <div class="label">Monthly Cost</div>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Slide 7: Q&A -->
+            <section data-transition="zoom">
+                <h1 style="font-size: 3em;">Questions?</h1>
+                
+                <div style="margin-top: 50px;">
+                    <div class="tech-stack">
+                        <div class="tech-item">Kafka (KRaft)</div>
+                        <div class="tech-item">EMR Serverless</div>
+                        <div class="tech-item">S3 Tables (Iceberg)</div>
+                        <div class="tech-item">Step Functions</div>
+                        <div class="tech-item">Deequ</div>
+                        <div class="tech-item">Terraform</div>
+                    </div>
+                </div>
+                
+                <p style="margin-top: 60px; font-size: 0.7em; color: #666;">
+                    📁 github.com/[username]/wikistream<br>
+                    <span style="font-size: 0.8em;">Full source code • Terraform IaC • Documentation</span>
+                </p>
+            </section>
+            
+        </div>
+    </div>
+    
+    <!-- Reveal.js -->
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+    <script>
+        Reveal.initialize({
+            hash: true,
+            slideNumber: 'c/t',
+            transition: 'slide',
+            transitionSpeed: 'default',
+            backgroundTransition: 'fade',
+            center: true,
+            controls: true,
+            progress: true,
+            autoPlayMedia: true,
+            
+            // Animation settings
+            autoAnimate: true,
+            autoAnimateEasing: 'ease-out',
+            autoAnimateDuration: 0.8,
+        });
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,21 @@
+# =============================================================================
+# WikiStream Pipeline - Terraform Variables Example
+# =============================================================================
+# Copy this file to terraform.tfvars and customize values
+#
+# Usage:
+#   cp terraform.tfvars.example terraform.tfvars
+#   # Edit terraform.tfvars
+#   terraform plan
+#   terraform apply
+# =============================================================================
+
+# Project settings
+project_name = "wikistream"
+environment  = "dev"  # Options: dev, staging, prod
+
+# AWS region (must support S3 Tables)
+aws_region = "us-east-1"
+
+# Network settings
+vpc_cidr = "10.0.0.0/16"

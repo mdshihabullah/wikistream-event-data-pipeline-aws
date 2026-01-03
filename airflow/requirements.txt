@@ -1,0 +1,14 @@
+# WikiStream Airflow Dependencies
+# For MWAA, create requirements.txt in S3 DAGs bucket
+
+# AWS providers
+apache-airflow-providers-amazon>=8.0.0
+
+# Sensors and operators we use
+# (most are included in amazon provider)
+
+# Additional utilities
+boto3>=1.34.0
+
+
+
