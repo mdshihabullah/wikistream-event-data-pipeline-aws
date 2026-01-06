@@ -201,17 +201,48 @@ resource "aws_s3_bucket_public_access_block" "data" {
 }
 
 # =============================================================================
-# S3 TABLE BUCKET (Apache Iceberg)
+# S3 TABLE BUCKET (Apache Iceberg) - Cost-Optimized Maintenance
+# =============================================================================
+# Based on AWS best practices for S3 Tables:
+# - Compaction: Combines small files into larger ones (improves query performance)
+# - Snapshot Management: Controls snapshot retention (reduces storage costs)
+# - Unreferenced File Removal: Cleans up orphaned files (prevents cost accumulation)
+# Reference: https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-tables-maintenance.html
 # =============================================================================
 
 resource "aws_s3tables_table_bucket" "wikistream" {
   name = "${local.name_prefix}-tables"
 
   maintenance_configuration = {
+    # Compaction: Merges small Parquet files into larger ones
+    # - Improves query performance (fewer files to scan)
+    # - Target 512MB files (good balance for analytics workloads)
+    iceberg_compaction = {
+      settings = {
+        target_file_size_mb = 512
+      }
+      status = "enabled"
+    }
+
+    # Snapshot Management: Controls how many snapshots to retain
+    # - Keeps storage costs down by expiring old snapshots
+    # - min_snapshots_to_keep: 1 for dev (keep at least 1 for recovery)
+    # - max_snapshot_age_hours: 48 (2 days) - allows time-travel for debugging in dev mode
+    iceberg_snapshot_management = {
+      settings = {
+        min_snapshots_to_keep  = 1
+        max_snapshot_age_hours = 48
+      }
+      status = "enabled"
+    }
+
+    # Unreferenced File Removal: Deletes orphaned files not referenced by any snapshot
+    # - unreferenced_days: 3 days before cleanup (allows for job retries)
+    # - non_current_days: 1 day for old file versions (aggressive for dev)
     iceberg_unreferenced_file_removal = {
       settings = {
-        unreferenced_days = 7
-        non_current_days  = 3
+        unreferenced_days = 3
+        non_current_days  = 1
       }
       status = "enabled"
     }
@@ -551,13 +582,20 @@ resource "aws_iam_role_policy" "emr_serverless" {
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents",
-          "logs:DescribeLogGroups",
           "logs:DescribeLogStreams"
         ]
         Resource = [
           "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/emr-serverless/*",
           "arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/emr-serverless/*:log-stream:*"
         ]
+      },
+      {
+        Sid    = "CloudWatchLogsDescribe"
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups"
+        ]
+        Resource = "*"
       },
       {
         Sid      = "SNSPublish"
@@ -674,7 +712,24 @@ resource "aws_ecr_lifecycle_policy" "producer" {
 }
 
 # =============================================================================
-# EMR SERVERLESS APPLICATION
+# EMR SERVERLESS APPLICATION (Optimized for 32 vCPU quota)
+# =============================================================================
+# 
+# IMPORTANT: Request quota increase before deploying!
+# Default quota is 16 vCPU. Request 32 vCPU via Service Quotas console:
+# 1. AWS Console → Service Quotas → EMR Serverless
+# 2. Find "Max concurrent vCPUs per account" 
+# 3. Request increase to 32 vCPU
+# 4. Wait for approval (usually 24-48 hours for paid accounts)
+#
+# Resource allocation strategy:
+# - Bronze streaming (continuous): 4 vCPU driver + 4 vCPU executors = 8 vCPU
+# - Batch jobs run SEQUENTIALLY via unified Step Function:
+#   - Silver: 2 vCPU driver + 4 vCPU executors = 6 vCPU
+#   - Data Quality: 2 vCPU driver + 4 vCPU executors = 6 vCPU  
+#   - Gold: 2 vCPU driver + 4 vCPU executors = 6 vCPU
+# Total concurrent max: Bronze (8) + one batch job (6) = 14 vCPU (within 16 quota)
+# With 32 quota: Bronze (8) + more executor headroom for spikes
 # =============================================================================
 
 resource "aws_emrserverless_application" "spark" {
@@ -682,11 +737,12 @@ resource "aws_emrserverless_application" "spark" {
   release_label = "emr-7.12.0" # Iceberg format-version 3 support with Apache Iceberg 1.10.0
   type          = "SPARK"
 
-  # Account quota is 16 vCPUs - optimize for sequential job execution
-  # Bronze streaming: ~4 vCPUs, Batch jobs: ~8 vCPUs each
+  # Maximum capacity aligned with requested quota (32 vCPU)
+  # This provides headroom for Bronze streaming + one batch job
   maximum_capacity {
-    cpu    = "16 vCPU"  # Matches account quota - run jobs sequentially
-    memory = "64 GB"
+    cpu    = "32 vCPU" # Request quota increase to 32 vCPU
+    memory = "128 GB"  # 4 GB per vCPU ratio
+    disk   = "400 GB"  # For Spark shuffle and temp data
   }
 
   auto_start_configuration {
@@ -695,7 +751,7 @@ resource "aws_emrserverless_application" "spark" {
 
   auto_stop_configuration {
     enabled              = true
-    idle_timeout_minutes = 10 # Slightly longer to reduce cold starts between jobs
+    idle_timeout_minutes = 15 # Longer to reduce cold starts between batch jobs
   }
 
   network_configuration {
@@ -703,7 +759,7 @@ resource "aws_emrserverless_application" "spark" {
     security_group_ids = [aws_security_group.emr.id]
   }
 
-  # Pre-warm driver for faster job startup
+  # Pre-warm driver for faster job startup (reduces cold start latency)
   initial_capacity {
     initial_capacity_type = "DRIVER"
     initial_capacity_config {
@@ -711,6 +767,20 @@ resource "aws_emrserverless_application" "spark" {
       worker_configuration {
         cpu    = "2 vCPU"
         memory = "4 GB"
+        disk   = "20 GB"
+      }
+    }
+  }
+
+  # Pre-warm one executor to accelerate job starts
+  initial_capacity {
+    initial_capacity_type = "EXECUTOR"
+    initial_capacity_config {
+      worker_count = 1
+      worker_configuration {
+        cpu    = "2 vCPU"
+        memory = "4 GB"
+        disk   = "20 GB"
       }
     }
   }
@@ -830,14 +900,294 @@ resource "aws_iam_role_policy" "step_functions" {
   })
 }
 
-# Silver Processing State Machine
+# =============================================================================
+# UNIFIED BATCH PIPELINE STATE MACHINE (Silver → Data Quality → Gold)
+# =============================================================================
+# This state machine runs all batch jobs SEQUENTIALLY to stay within vCPU quota
+# Total execution time target: ≤4 minutes to meet ≤5 minute SLA
+# =============================================================================
+
+resource "aws_sfn_state_machine" "batch_pipeline" {
+  name     = "${local.name_prefix}-batch-pipeline"
+  role_arn = aws_iam_role.step_functions.arn
+
+  definition = <<-EOF
+{
+  "Comment": "Unified batch pipeline: Silver → Data Quality → Gold (Sequential to optimize vCPU usage)",
+  "StartAt": "RecordPipelineStart",
+  "States": {
+    "RecordPipelineStart": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "BatchPipelineStarted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Pipeline", "Value": "batch"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "StartSilverJob"
+    },
+    "StartSilverJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${aws_emrserverless_application.spark.id}",
+        "ExecutionRoleArn": "${aws_iam_role.emr_serverless.arn}",
+        "Name": "silver-processing",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/silver_batch_job.py",
+            "EntryPointArguments": ["1"],
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
+              "LogStreamNamePrefix": "silver"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/silver/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.silverResult",
+      "TimeoutSeconds": 180,
+      "Next": "RecordSilverSuccess",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifySilverFailure"
+      }]
+    },
+    "RecordSilverSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "SilverProcessingCompleted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "silver"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "StartDataQualityJob"
+    },
+    "StartDataQualityJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${aws_emrserverless_application.spark.id}",
+        "ExecutionRoleArn": "${aws_iam_role.emr_serverless.arn}",
+        "Name": "data-quality-check",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/data_quality_job.py",
+            "EntryPointArguments": ["${aws_sns_topic.alerts.arn}"],
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0,com.amazon.deequ:deequ:2.0.7-spark-3.5 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
+              "LogStreamNamePrefix": "data-quality"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/data-quality/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.dqResult",
+      "TimeoutSeconds": 300,
+      "Next": "RecordDQSuccess",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyDQFailure"
+      }]
+    },
+    "RecordDQSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "QualityCheckCompleted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "all"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "StartGoldJob"
+    },
+    "StartGoldJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${aws_emrserverless_application.spark.id}",
+        "ExecutionRoleArn": "${aws_iam_role.emr_serverless.arn}",
+        "Name": "gold-processing",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/gold_batch_job.py",
+            "EntryPointArguments": ["1"],
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
+              "LogStreamNamePrefix": "gold"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/gold/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.goldResult",
+      "TimeoutSeconds": 180,
+      "Next": "RecordGoldSuccess",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyGoldFailure"
+      }]
+    },
+    "RecordGoldSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [
+          {
+            "MetricName": "GoldProcessingCompleted",
+            "Value": 1,
+            "Unit": "Count",
+            "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+          },
+          {
+            "MetricName": "BatchPipelineCompleted",
+            "Value": 1,
+            "Unit": "Count",
+            "Dimensions": [{"Name": "Pipeline", "Value": "batch"}]
+          }
+        ]
+      },
+      "ResultPath": null,
+      "Next": "Success"
+    },
+    "NotifySilverFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${aws_sns_topic.alerts.arn}",
+        "Subject": "WikiStream Silver Processing Failure",
+        "Message.$": "States.Format('PIPELINE_FAILURE | Layer: silver | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordSilverFailure"
+    },
+    "RecordSilverFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "SilverProcessingFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "silver"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "NotifyDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${aws_sns_topic.alerts.arn}",
+        "Subject": "WikiStream Data Quality Check Failure",
+        "Message.$": "States.Format('DATA_QUALITY_FAILURE | Severity: CRITICAL | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordDQFailure"
+    },
+    "RecordDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "QualityCheckFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "all"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "NotifyGoldFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${aws_sns_topic.alerts.arn}",
+        "Subject": "WikiStream Gold Processing Failure",
+        "Message.$": "States.Format('PIPELINE_FAILURE | Layer: gold | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordGoldFailure"
+    },
+    "RecordGoldFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "GoldProcessingFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "Fail": {
+      "Type": "Fail",
+      "Error": "BatchPipelineFailed",
+      "Cause": "Batch pipeline processing failed"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
+EOF
+}
+
+# Keep individual state machines for manual/ad-hoc runs
 resource "aws_sfn_state_machine" "silver_processing" {
   name     = "${local.name_prefix}-silver-processing"
   role_arn = aws_iam_role.step_functions.arn
 
   definition = <<-EOF
 {
-  "Comment": "Silver layer batch processing with data quality checks",
+  "Comment": "Silver layer batch processing (standalone) - Use batch-pipeline for scheduled runs",
   "StartAt": "StartSilverJob",
   "States": {
     "StartSilverJob": {
@@ -850,18 +1200,25 @@ resource "aws_sfn_state_machine" "silver_processing" {
         "JobDriver": {
           "SparkSubmit": {
             "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/silver_batch_job.py",
-            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+            "EntryPointArguments": ["1"],
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
           }
         },
         "ConfigurationOverrides": {
           "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
+              "LogStreamNamePrefix": "silver"
+            },
             "S3MonitoringConfiguration": {
-              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/"
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/silver/"
             }
           }
         }
       },
       "ResultPath": "$.jobResult",
+      "TimeoutSeconds": 180,
       "Next": "RecordSuccessMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -890,7 +1247,7 @@ resource "aws_sfn_state_machine" "silver_processing" {
       "Parameters": {
         "TopicArn": "${aws_sns_topic.alerts.arn}",
         "Subject": "WikiStream Silver Processing Failure",
-        "Message.$": "States.Format('{{\"alert_type\":\"PIPELINE_FAILURE\",\"severity\":\"HIGH\",\"layer\":\"silver\",\"execution_id\":\"{}\",\"error\":\"{}\",\"timestamp\":\"{}\",\"runbook\":\"https://wiki.example.com/wikistream/runbook#silver-failure\"}}', $$.Execution.Id, $.error.Cause, $$.State.EnteredTime)"
+        "Message.$": "States.Format('PIPELINE_FAILURE | Layer: silver | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
       },
       "Next": "RecordFailureMetrics"
     },
@@ -922,14 +1279,14 @@ resource "aws_sfn_state_machine" "silver_processing" {
 EOF
 }
 
-# Gold Processing State Machine  
+# Gold Processing State Machine (standalone - for manual/ad-hoc runs)
 resource "aws_sfn_state_machine" "gold_processing" {
   name     = "${local.name_prefix}-gold-processing"
   role_arn = aws_iam_role.step_functions.arn
 
   definition = <<-EOF
 {
-  "Comment": "Gold layer batch processing with analytics aggregations",
+  "Comment": "Gold layer batch processing (standalone) - Use batch-pipeline for scheduled runs",
   "StartAt": "StartGoldJob",
   "States": {
     "StartGoldJob": {
@@ -942,18 +1299,25 @@ resource "aws_sfn_state_machine" "gold_processing" {
         "JobDriver": {
           "SparkSubmit": {
             "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/gold_batch_job.py",
-            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+            "EntryPointArguments": ["1"],
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
           }
         },
         "ConfigurationOverrides": {
           "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
+              "LogStreamNamePrefix": "gold"
+            },
             "S3MonitoringConfiguration": {
-              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/"
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/gold/"
             }
           }
         }
       },
       "ResultPath": "$.jobResult",
+      "TimeoutSeconds": 180,
       "Next": "RecordSuccessMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -982,7 +1346,7 @@ resource "aws_sfn_state_machine" "gold_processing" {
       "Parameters": {
         "TopicArn": "${aws_sns_topic.alerts.arn}",
         "Subject": "WikiStream Gold Processing Failure",
-        "Message.$": "States.Format('{{\"alert_type\":\"PIPELINE_FAILURE\",\"severity\":\"HIGH\",\"layer\":\"gold\",\"execution_id\":\"{}\",\"error\":\"{}\",\"timestamp\":\"{}\",\"runbook\":\"https://wiki.example.com/wikistream/runbook#gold-failure\"}}', $$.Execution.Id, $.error.Cause, $$.State.EnteredTime)"
+        "Message.$": "States.Format('PIPELINE_FAILURE | Layer: gold | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
       },
       "Next": "RecordFailureMetrics"
     },
@@ -1014,14 +1378,14 @@ resource "aws_sfn_state_machine" "gold_processing" {
 EOF
 }
 
-# Data Quality State Machine
+# Data Quality State Machine (standalone - for manual/ad-hoc runs)
 resource "aws_sfn_state_machine" "data_quality" {
   name     = "${local.name_prefix}-data-quality"
   role_arn = aws_iam_role.step_functions.arn
 
   definition = <<-EOF
 {
-  "Comment": "Data quality checks using Deequ across all layers",
+  "Comment": "Data quality checks (standalone) - Use batch-pipeline for scheduled runs",
   "StartAt": "RunDataQualityJob",
   "States": {
     "RunDataQualityJob": {
@@ -1035,18 +1399,24 @@ resource "aws_sfn_state_machine" "data_quality" {
           "SparkSubmit": {
             "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/data_quality_job.py",
             "EntryPointArguments": ["${aws_sns_topic.alerts.arn}"],
-            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0,com.amazon.deequ:deequ:2.0.7-spark-3.5 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.adaptive.skewJoin.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0,com.amazon.deequ:deequ:2.0.7-spark-3.5 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
           }
         },
         "ConfigurationOverrides": {
           "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
+              "LogStreamNamePrefix": "data-quality"
+            },
             "S3MonitoringConfiguration": {
-              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/"
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/data-quality/"
             }
           }
         }
       },
       "ResultPath": "$.jobResult",
+      "TimeoutSeconds": 300,
       "Next": "RecordQualityMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1075,7 +1445,7 @@ resource "aws_sfn_state_machine" "data_quality" {
       "Parameters": {
         "TopicArn": "${aws_sns_topic.alerts.arn}",
         "Subject": "WikiStream Data Quality Check Failure",
-        "Message.$": "States.Format('{{\"alert_type\":\"DATA_QUALITY_FAILURE\",\"severity\":\"CRITICAL\",\"execution_id\":\"{}\",\"error\":\"{}\",\"timestamp\":\"{}\",\"layers_affected\":[\"bronze\",\"silver\",\"gold\"],\"runbook\":\"https://wiki.example.com/wikistream/runbook#data-quality\"}}', $$.Execution.Id, $.error.Cause, $$.State.EnteredTime)"
+        "Message.$": "States.Format('DATA_QUALITY_FAILURE | Severity: CRITICAL | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
       },
       "Next": "RecordQualityFailure"
     },
@@ -1107,12 +1477,36 @@ resource "aws_sfn_state_machine" "data_quality" {
 EOF
 }
 
-# EventBridge Rules for Scheduling (Start DISABLED - enable after deployment)
+# =============================================================================
+# EVENTBRIDGE SCHEDULING (Single unified batch pipeline for ≤5 min SLA)
+# =============================================================================
+# Uses unified batch pipeline (Silver → DQ → Gold) to:
+# 1. Stay within vCPU quota by running jobs sequentially
+# 2. Meet ≤5 minute SLA for dashboard freshness
+# 3. Reduce cold start overhead between jobs
+# =============================================================================
+
+# Primary schedule - Unified batch pipeline every 5 minutes
+resource "aws_cloudwatch_event_rule" "batch_pipeline_schedule" {
+  name                = "${local.name_prefix}-batch-pipeline-schedule"
+  description         = "Trigger unified batch pipeline (Silver->DQ->Gold) every 5 minutes for ≤5 min SLA"
+  schedule_expression = "rate(5 minutes)"
+  state               = "DISABLED" # Enable via CLI after deployment
+}
+
+resource "aws_cloudwatch_event_target" "batch_pipeline_schedule" {
+  rule      = aws_cloudwatch_event_rule.batch_pipeline_schedule.name
+  target_id = "batch-pipeline"
+  arn       = aws_sfn_state_machine.batch_pipeline.arn
+  role_arn  = aws_iam_role.eventbridge_sfn.arn
+}
+
+# Keep individual schedules for manual overrides (DISABLED by default)
 resource "aws_cloudwatch_event_rule" "silver_schedule" {
   name                = "${local.name_prefix}-silver-schedule"
-  description         = "Trigger Silver processing every 5 minutes"
+  description         = "Individual Silver processing (use batch-pipeline for normal ops)"
   schedule_expression = "rate(5 minutes)"
-  state               = "DISABLED" # Enable via CLI after image is pushed
+  state               = "DISABLED"
 }
 
 resource "aws_cloudwatch_event_target" "silver_schedule" {
@@ -1124,9 +1518,9 @@ resource "aws_cloudwatch_event_target" "silver_schedule" {
 
 resource "aws_cloudwatch_event_rule" "gold_schedule" {
   name                = "${local.name_prefix}-gold-schedule"
-  description         = "Trigger Gold processing every 5 minutes"
+  description         = "Individual Gold processing (use batch-pipeline for normal ops)"
   schedule_expression = "rate(5 minutes)"
-  state               = "DISABLED" # Enable via CLI after image is pushed
+  state               = "DISABLED"
 }
 
 resource "aws_cloudwatch_event_target" "gold_schedule" {
@@ -1136,12 +1530,11 @@ resource "aws_cloudwatch_event_target" "gold_schedule" {
   role_arn  = aws_iam_role.eventbridge_sfn.arn
 }
 
-# Data Quality schedule - every 15 minutes
 resource "aws_cloudwatch_event_rule" "data_quality_schedule" {
   name                = "${local.name_prefix}-data-quality-schedule"
-  description         = "Trigger Data Quality checks every 15 minutes"
+  description         = "Individual Data Quality (use batch-pipeline for normal ops)"
   schedule_expression = "rate(15 minutes)"
-  state               = "DISABLED" # Enable via CLI after deployment
+  state               = "DISABLED"
 }
 
 resource "aws_cloudwatch_event_target" "data_quality_schedule" {
@@ -1174,6 +1567,7 @@ resource "aws_iam_role_policy" "eventbridge_sfn" {
       Effect = "Allow"
       Action = ["states:StartExecution"]
       Resource = [
+        aws_sfn_state_machine.batch_pipeline.arn,
         aws_sfn_state_machine.silver_processing.arn,
         aws_sfn_state_machine.gold_processing.arn,
         aws_sfn_state_machine.data_quality.arn
@@ -1241,17 +1635,18 @@ resource "aws_lambda_function" "bronze_restart" {
 
   environment {
     variables = {
-      EMR_APP_ID         = aws_emrserverless_application.spark.id
-      EMR_ROLE_ARN       = aws_iam_role.emr_serverless.arn
-      S3_BUCKET          = aws_s3_bucket.data.id
-      S3_TABLES_ARN      = aws_s3tables_table_bucket.wikistream.arn
-      MSK_BOOTSTRAP      = aws_msk_cluster.wikistream.bootstrap_brokers_sasl_iam
-      SNS_TOPIC_ARN      = aws_sns_topic.alerts.arn
+      EMR_APP_ID    = aws_emrserverless_application.spark.id
+      EMR_ROLE_ARN  = aws_iam_role.emr_serverless.arn
+      S3_BUCKET     = aws_s3_bucket.data.id
+      S3_TABLES_ARN = aws_s3tables_table_bucket.wikistream.arn
+      MSK_BOOTSTRAP = aws_msk_cluster.wikistream.bootstrap_brokers_sasl_iam
+      SNS_TOPIC_ARN = aws_sns_topic.alerts.arn
     }
   }
 }
 
 # Lambda code - inline for simplicity
+# Optimized for 8 vCPU total (2 driver + 2 executors × 2 vCPU each)
 data "archive_file" "bronze_restart_lambda" {
   type        = "zip"
   output_path = "${path.module}/bronze_restart_lambda.zip"
@@ -1272,6 +1667,7 @@ sns_client = boto3.client('sns')
 def handler(event, context):
     """
     Lambda handler to restart Bronze streaming job when CloudWatch alarm triggers.
+    Optimized for 8 vCPU total: 2 vCPU driver + 2 executors × 2 vCPU each
     """
     logger.info(f"Received event: {json.dumps(event)}")
     
@@ -1299,7 +1695,8 @@ def handler(event, context):
                 'body': json.dumps({'message': 'Bronze job already running', 'jobId': bronze_jobs[0]['id']})
             }
         
-        # Start new Bronze streaming job
+        # Start new Bronze streaming job with optimized resource allocation
+        # Total: 8 vCPU = 2 vCPU driver + 2 executors × 2 vCPU
         iceberg_packages = (
             "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,"
             "software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,"
@@ -1308,17 +1705,13 @@ def handler(event, context):
             "software.amazon.msk:aws-msk-iam-auth:2.2.0"
         )
         
-        spark_conf = [
-            "--conf", "spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions",
-            "--conf", "spark.sql.adaptive.enabled=true",
-            "--conf", "spark.sql.adaptive.coalescePartitions.enabled=true",
-            "--conf", "spark.sql.adaptive.skewJoin.enabled=true",
-            "--conf", "spark.sql.iceberg.handle-timestamp-without-timezone=true"
-        ]
-        
         spark_conf = (
+            f"--conf spark.driver.cores=2 "
+            f"--conf spark.driver.memory=4g "
             f"--conf spark.executor.cores=2 "
             f"--conf spark.executor.memory=4g "
+            f"--conf spark.executor.instances=2 "
+            f"--conf spark.dynamicAllocation.enabled=false "
             f"--conf spark.jars.packages={iceberg_packages} "
             f"--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
             f"--conf spark.sql.adaptive.enabled=true "
@@ -1343,8 +1736,13 @@ def handler(event, context):
             },
             configurationOverrides={
                 'monitoringConfiguration': {
+                    'cloudWatchLoggingConfiguration': {
+                        'enabled': True,
+                        'logGroupName': f'/aws/emr-serverless/wikistream-dev',
+                        'logStreamNamePrefix': 'bronze'
+                    },
                     's3MonitoringConfiguration': {
-                        'logUri': f's3://{s3_bucket}/logs/emr/bronze/'
+                        'logUri': f's3://{s3_bucket}/emr-serverless/logs/bronze/'
                     }
                 }
             }
@@ -1362,6 +1760,7 @@ def handler(event, context):
                 'severity': 'INFO',
                 'job_id': job_id,
                 'application_id': app_id,
+                'resource_allocation': '8 vCPU (2 driver + 2x2 executor)',
                 'message': 'Bronze streaming job was automatically restarted after health check failure'
             }, indent=2)
         )
@@ -1467,6 +1866,268 @@ resource "aws_lambda_permission" "cloudwatch_bronze_restart" {
 }
 
 # =============================================================================
+# CLOUDWATCH LOG GROUP FOR EMR SERVERLESS
+# =============================================================================
+
+resource "aws_cloudwatch_log_group" "emr_serverless" {
+  name              = "/aws/emr-serverless/${local.name_prefix}"
+  retention_in_days = 14 # 2 weeks retention for debugging
+}
+
+# =============================================================================
+# CLOUDWATCH DASHBOARD - PIPELINE MONITORING
+# =============================================================================
+# Comprehensive monitoring dashboard for the data pipeline
+# Covers: Bronze streaming, Batch pipeline, Data quality, SLA metrics
+# =============================================================================
+
+resource "aws_cloudwatch_dashboard" "pipeline" {
+  dashboard_name = "${local.name_prefix}-pipeline-dashboard"
+
+  dashboard_body = jsonencode({
+    widgets = [
+      # Row 1: Pipeline Health Overview
+      {
+        type   = "metric"
+        x      = 0
+        y      = 0
+        width  = 6
+        height = 6
+        properties = {
+          title  = "Bronze Streaming - Records/5min"
+          region = local.region
+          metrics = [
+            ["WikiStream/Pipeline", "BronzeRecordsProcessed", "Layer", "bronze", { stat = "Sum", period = 300 }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 6
+        y      = 0
+        width  = 6
+        height = 6
+        properties = {
+          title  = "Batch Pipeline Executions"
+          region = local.region
+          metrics = [
+            ["WikiStream/Pipeline", "BatchPipelineCompleted", "Pipeline", "batch", { stat = "Sum", period = 300, color = "#2ca02c" }],
+            ["WikiStream/Pipeline", "BatchPipelineStarted", "Pipeline", "batch", { stat = "Sum", period = 300, color = "#1f77b4" }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 0
+        width  = 6
+        height = 6
+        properties = {
+          title  = "Processing Latency (ms)"
+          region = local.region
+          metrics = [
+            ["WikiStream/Pipeline", "ProcessingLatencyMs", "Layer", "bronze", { stat = "Average", period = 300 }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+          annotations = {
+            horizontal = [
+              { value = 30000, label = "Target: 30s" }
+            ]
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 18
+        y      = 0
+        width  = 6
+        height = 6
+        properties = {
+          title  = "Data Quality Status"
+          region = local.region
+          metrics = [
+            ["WikiStream/DataQuality", "QualityCheckCompleted", "Layer", "all", { stat = "Sum", period = 300, color = "#2ca02c" }],
+            ["WikiStream/DataQuality", "QualityCheckFailed", "Layer", "all", { stat = "Sum", period = 300, color = "#d62728" }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+        }
+      },
+      # Row 2: Layer-specific Metrics
+      {
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 8
+        height = 6
+        properties = {
+          title  = "Silver Processing"
+          region = local.region
+          metrics = [
+            ["WikiStream/Pipeline", "SilverProcessingCompleted", "Layer", "silver", { stat = "Sum", period = 300, color = "#2ca02c" }],
+            ["WikiStream/Pipeline", "SilverProcessingFailed", "Layer", "silver", { stat = "Sum", period = 300, color = "#d62728" }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 8
+        y      = 6
+        width  = 8
+        height = 6
+        properties = {
+          title  = "Gold Processing"
+          region = local.region
+          metrics = [
+            ["WikiStream/Pipeline", "GoldProcessingCompleted", "Layer", "gold", { stat = "Sum", period = 300, color = "#2ca02c" }],
+            ["WikiStream/Pipeline", "GoldProcessingFailed", "Layer", "gold", { stat = "Sum", period = 300, color = "#d62728" }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 16
+        y      = 6
+        width  = 8
+        height = 6
+        properties = {
+          title  = "Bronze Batch Completions"
+          region = local.region
+          metrics = [
+            ["WikiStream/Pipeline", "BronzeBatchCompleted", "Layer", "bronze", { stat = "Sum", period = 300 }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+        }
+      },
+      # Row 3: Infrastructure Metrics
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 8
+        height = 6
+        properties = {
+          title  = "ECS Producer - CPU/Memory"
+          region = local.region
+          metrics = [
+            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { stat = "Average", period = 300 }],
+            ["AWS/ECS", "MemoryUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { stat = "Average", period = 300 }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0, max = 100 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 8
+        y      = 12
+        width  = 8
+        height = 6
+        properties = {
+          title  = "MSK - Bytes In/Out"
+          region = local.region
+          metrics = [
+            ["AWS/Kafka", "BytesInPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { stat = "Average", period = 300 }],
+            ["AWS/Kafka", "BytesOutPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { stat = "Average", period = 300 }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 16
+        y      = 12
+        width  = 8
+        height = 6
+        properties = {
+          title  = "Step Functions Executions"
+          region = local.region
+          metrics = [
+            ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { stat = "Sum", period = 300, color = "#2ca02c" }],
+            ["AWS/States", "ExecutionsFailed", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { stat = "Sum", period = 300, color = "#d62728" }],
+            ["AWS/States", "ExecutionsStarted", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { stat = "Sum", period = 300, color = "#1f77b4" }]
+          ]
+          view  = "timeSeries"
+          yAxis = { left = { min = 0 } }
+        }
+      },
+      # Row 4: Alerts and Text
+      {
+        type   = "text"
+        x      = 0
+        y      = 18
+        width  = 12
+        height = 3
+        properties = {
+          markdown = <<-EOF
+## WikiStream Pipeline Health
+
+**SLA Target:** Analytics dashboards reflect new edits within ≤5 minutes
+
+**Architecture:**
+- **Bronze (Streaming):** Kafka → Spark Streaming → Iceberg (30s micro-batches)
+- **Batch Pipeline:** Silver → Data Quality → Gold (runs every 5 minutes)
+- **EMR Serverless:** Optimized for 32 vCPU quota, jobs run sequentially
+
+**Quick Links:**
+- [EMR Serverless Console](https://${local.region}.console.aws.amazon.com/emr/home?region=${local.region}#/serverless/applications/${aws_emrserverless_application.spark.id})
+- [Step Functions](https://${local.region}.console.aws.amazon.com/states/home?region=${local.region}#/statemachines)
+EOF
+        }
+      },
+      {
+        type   = "alarm"
+        x      = 12
+        y      = 18
+        width  = 12
+        height = 3
+        properties = {
+          title = "Active Alarms"
+          alarms = [
+            aws_cloudwatch_metric_alarm.ecs_cpu.arn,
+            aws_cloudwatch_metric_alarm.bronze_health.arn
+          ]
+        }
+      }
+    ]
+  })
+}
+
+# =============================================================================
+# SLA MONITORING ALARM - Pipeline End-to-End Latency
+# =============================================================================
+
+resource "aws_cloudwatch_metric_alarm" "batch_pipeline_failure" {
+  alarm_name          = "${local.name_prefix}-batch-pipeline-failure"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ExecutionsFailed"
+  namespace           = "AWS/States"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  alarm_description   = "Batch pipeline (Silver→DQ→Gold) has failed"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    StateMachineArn = aws_sfn_state_machine.batch_pipeline.arn
+  }
+}
+
+# =============================================================================
 # OUTPUTS
 # =============================================================================
 
@@ -1516,18 +2177,23 @@ output "alerts_sns_topic_arn" {
   value       = aws_sns_topic.alerts.arn
 }
 
+output "batch_pipeline_state_machine_arn" {
+  description = "Unified Batch Pipeline State Machine ARN (Silver→DQ→Gold)"
+  value       = aws_sfn_state_machine.batch_pipeline.arn
+}
+
 output "silver_state_machine_arn" {
-  description = "Silver Processing State Machine ARN"
+  description = "Silver Processing State Machine ARN (standalone)"
   value       = aws_sfn_state_machine.silver_processing.arn
 }
 
 output "gold_state_machine_arn" {
-  description = "Gold Processing State Machine ARN"
+  description = "Gold Processing State Machine ARN (standalone)"
   value       = aws_sfn_state_machine.gold_processing.arn
 }
 
 output "data_quality_state_machine_arn" {
-  description = "Data Quality State Machine ARN"
+  description = "Data Quality State Machine ARN (standalone)"
   value       = aws_sfn_state_machine.data_quality.arn
 }
 
@@ -1539,4 +2205,14 @@ output "emr_serverless_role_arn" {
 output "bronze_restart_lambda_arn" {
   description = "Bronze Job Auto-Restart Lambda ARN"
   value       = aws_lambda_function.bronze_restart.arn
+}
+
+output "cloudwatch_dashboard_name" {
+  description = "CloudWatch Dashboard name for pipeline monitoring"
+  value       = aws_cloudwatch_dashboard.pipeline.dashboard_name
+}
+
+output "emr_serverless_log_group" {
+  description = "CloudWatch Log Group for EMR Serverless jobs"
+  value       = aws_cloudwatch_log_group.emr_serverless.name
 }

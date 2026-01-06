@@ -253,14 +253,21 @@ def compute_risk_scores(spark, start_date: str, end_date: str):
 # =============================================================================
 
 def main():
-    """Main entry point for Gold batch job."""
+    """Main entry point for Gold batch job.
+    
+    Optimized for ≤5 minute SLA:
+    - Default lookback: 1 hour (process recent Silver data quickly)
+    - Incremental aggregation: only new Silver records
+    - Resource efficient: 4 vCPU total (1 driver + 1 executor × 2 vCPU)
+    """
     print("=" * 60)
     print("WikiStream Gold Batch Job")
     print(f"Started at: {datetime.utcnow().isoformat()}")
     print("=" * 60)
     
-    # Parse arguments: lookback_hours (default 24 hours to capture all recent data)
-    lookback_hours = 24
+    # Parse arguments: lookback_hours (default 1 hour for fast incremental processing)
+    # Use 24 for backfill scenarios
+    lookback_hours = 1
     if len(sys.argv) >= 2:
         lookback_hours = int(sys.argv[1])
     
@@ -348,6 +355,19 @@ def main():
             'write.update.mode' = 'merge-on-read'
         )
     """)
+    
+    # Add schema_version column if it doesn't exist (for existing tables)
+    try:
+        spark.sql("ALTER TABLE s3tablesbucket.gold.hourly_stats ADD COLUMN schema_version STRING")
+        print("Added schema_version column to gold.hourly_stats")
+    except Exception:
+        pass
+    
+    try:
+        spark.sql("ALTER TABLE s3tablesbucket.gold.risk_scores ADD COLUMN schema_version STRING")
+        print("Added schema_version column to gold.risk_scores")
+    except Exception:
+        pass
     
     # Compute and write hourly stats
     hourly_df = compute_hourly_stats(spark, start_date, end_date)

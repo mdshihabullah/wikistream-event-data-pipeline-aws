@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WikiStream Pipeline Architecture</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Amazon Ember', 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #e4e4e4;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+            color: #ff9900;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .subtitle {
+            text-align: center;
+            color: #8ecae6;
+            margin-bottom: 30px;
+            font-size: 1.1rem;
+        }
+        .diagram-container {
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+            margin-bottom: 30px;
+        }
+        .legend {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .legend-section {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,153,0,0.3);
+            border-radius: 8px;
+            padding: 20px;
+        }
+        .legend-section h3 {
+            color: #ff9900;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+            border-bottom: 1px solid rgba(255,153,0,0.3);
+            padding-bottom: 8px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 12px;
+            font-size: 0.9rem;
+        }
+        .legend-item .icon {
+            min-width: 24px;
+            margin-right: 10px;
+            font-size: 1.1rem;
+        }
+        .status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            margin-left: 5px;
+        }
+        .status-live { background: #2ecc71; color: #000; }
+        .status-implemented { background: #3498db; color: #fff; }
+        .status-auto { background: #9b59b6; color: #fff; }
+        .tech-stack {
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+        .tech-stack h3 {
+            color: #ff9900;
+            margin-bottom: 15px;
+        }
+        .tech-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .tech-item {
+            background: rgba(255,153,0,0.1);
+            border: 1px solid rgba(255,153,0,0.2);
+            border-radius: 6px;
+            padding: 12px;
+        }
+        .tech-item strong {
+            color: #ff9900;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .tech-item span {
+            font-size: 0.85rem;
+            color: #bbb;
+        }
+        .mermaid {
+            display: flex;
+            justify-content: center;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .metric-box {
+            background: rgba(255,153,0,0.15);
+            border: 1px solid rgba(255,153,0,0.3);
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+        }
+        .metric-box .value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #ff9900;
+        }
+        .metric-box .label {
+            font-size: 0.85rem;
+            color: #8ecae6;
+        }
+        @media (max-width: 768px) {
+            .metrics { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌐 WikiStream Event Data Pipeline</h1>
+        <p class="subtitle">Real-time Wikipedia Edit Stream Processing on AWS • Medallion Architecture</p>
+        
+        <!-- Key Metrics -->
+        <div class="metrics">
+            <div class="metric-box">
+                <div class="value">≤30s</div>
+                <div class="label">Bronze Ingestion</div>
+            </div>
+            <div class="metric-box">
+                <div class="value">≤5min</div>
+                <div class="label">End-to-End SLA</div>
+            </div>
+            <div class="metric-box">
+                <div class="value">3</div>
+                <div class="label">Medallion Layers</div>
+            </div>
+            <div class="metric-box">
+                <div class="value">24/7</div>
+                <div class="label">Streaming</div>
+            </div>
+        </div>
+
+        <!-- Main Architecture Diagram -->
+        <div class="diagram-container">
+            <div class="mermaid">
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ff9900', 'primaryTextColor': '#232f3e', 'primaryBorderColor': '#ff9900', 'lineColor': '#527fff', 'secondaryColor': '#232f3e', 'tertiaryColor': '#f5f5f5', 'background': '#ffffff'}}}%%
+flowchart TB
+    subgraph EXT["☁️ EXTERNAL DATA SOURCE"]
+        WIKI["🌐 Wikipedia EventStreams<br/><i>Server-Sent Events (SSE)</i><br/><b>stream.wikimedia.org</b>"]
+    end
+
+    subgraph VPC["🔒 AWS VPC (us-east-1)"]
+        subgraph INGESTION["📥 DATA INGESTION"]
+            ECS["🐳 ECS Fargate<br/><b>Kafka Producer</b><br/><i>Python + confluent-kafka</i><br/>0.25 vCPU / 512MB"]
+        end
+
+        subgraph STREAMING["📡 EVENT STREAMING"]
+            MSK["MSK (Kafka 3.9.x)<br/><b>KRaft Mode</b><br/><i>2x kafka.t3.small</i><br/>Topics: raw-events, dlq-events"]
+        end
+
+        subgraph PROCESSING["⚡ DATA PROCESSING (EMR Serverless)"]
+            subgraph STREAM_LAYER["🔴 STREAMING LAYER"]
+                BRONZE_JOB["🥉 Bronze Streaming Job<br/><b>Spark Structured Streaming</b><br/><i>30s micro-batches</i><br/>Kafka → Iceberg"]
+            end
+            
+            subgraph BATCH_LAYER["🔵 BATCH LAYER (Step Functions)"]
+                SILVER_JOB["🥈 Silver Batch Job<br/><b>Data Cleansing</b><br/><i>Deduplication, Normalization</i>"]
+                DQ_JOB["🔍 Data Quality Job<br/><b>AWS Deequ</b><br/><i>Completeness, Validity</i>"]
+                GOLD_JOB["🥇 Gold Batch Job<br/><b>Aggregations</b><br/><i>Hourly Stats, Entity Trends</i>"]
+            end
+        end
+    end
+
+    subgraph STORAGE["💾 DATA LAKE STORAGE"]
+        subgraph S3TABLES["📊 S3 Tables (Apache Iceberg)"]
+            BRONZE_TBL["🥉 bronze.wiki_events<br/><i>Raw ingested events</i><br/>Partitioned by date/hour"]
+            SILVER_TBL["🥈 silver.wiki_events_cleaned<br/><i>Deduplicated & normalized</i>"]
+            GOLD_TBL["🥇 gold.*<br/><i>hourly_edit_stats</i><br/><i>entity_trends</i><br/><i>risk_scores</i>"]
+        end
+        
+        S3["📦 S3 Bucket<br/><i>Checkpoints, Logs</i><br/><i>Spark Jobs (.py)</i>"]
+    end
+
+    subgraph MONITORING["📈 MONITORING & ORCHESTRATION"]
+        SFN["⚙️ Step Functions<br/><b>Batch Pipeline</b><br/><i>Silver → DQ → Gold</i><br/>Every 5 minutes"]
+        CW["📊 CloudWatch<br/><i>Metrics, Logs, Dashboard</i><br/><i>Alarms</i>"]
+        SNS["📧 SNS<br/><i>Alerts & Notifications</i>"]
+        LAMBDA["λ Lambda<br/><b>Auto-Restart</b><br/><i>Bronze Job Recovery</i>"]
+        EB["⏰ EventBridge<br/><i>Scheduled Triggers</i>"]
+    end
+
+    subgraph DEVOPS["🛠️ INFRASTRUCTURE"]
+        TF["🏗️ Terraform<br/><i>Infrastructure as Code</i>"]
+        ECR["📦 ECR<br/><i>Docker Images</i>"]
+    end
+
+    %% Data Flow
+    WIKI -->|"SSE Stream"| ECS
+    ECS -->|"IAM Auth"| MSK
+    MSK -->|"raw-events topic"| BRONZE_JOB
+    
+    BRONZE_JOB -->|"MERGE INTO"| BRONZE_TBL
+    BRONZE_JOB -->|"Checkpoints"| S3
+    
+    BRONZE_TBL -->|"Read"| SILVER_JOB
+    SILVER_JOB -->|"Write"| SILVER_TBL
+    
+    SILVER_TBL -->|"Validate"| DQ_JOB
+    DQ_JOB -->|"Quality Metrics"| CW
+    
+    SILVER_TBL -->|"Read"| GOLD_JOB
+    GOLD_JOB -->|"Write"| GOLD_TBL
+    
+    %% Orchestration
+    EB -->|"Schedule"| SFN
+    SFN -->|"Trigger"| SILVER_JOB
+    SFN -->|"Trigger"| DQ_JOB
+    SFN -->|"Trigger"| GOLD_JOB
+    
+    %% Monitoring
+    BRONZE_JOB -->|"Metrics"| CW
+    CW -->|"Alarm"| LAMBDA
+    LAMBDA -->|"Restart"| BRONZE_JOB
+    CW -->|"Alerts"| SNS
+    DQ_JOB -->|"Failures"| SNS
+    
+    %% DevOps
+    TF -->|"Provision"| VPC
+    ECR -->|"Pull Image"| ECS
+
+    %% Styling
+    classDef external fill:#e8f4f8,stroke:#0073bb,stroke-width:2px
+    classDef ingestion fill:#fef3e2,stroke:#ff9900,stroke-width:2px
+    classDef streaming fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    classDef processing fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef storage fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef monitoring fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef devops fill:#eceff1,stroke:#546e7a,stroke-width:2px
+    
+    class WIKI external
+    class ECS ingestion
+    class MSK streaming
+    class BRONZE_JOB,SILVER_JOB,DQ_JOB,GOLD_JOB processing
+    class BRONZE_TBL,SILVER_TBL,GOLD_TBL,S3 storage
+    class SFN,CW,SNS,LAMBDA,EB monitoring
+    class TF,ECR devops
+            </div>
+        </div>
+
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-section">
+                <h3>📥 Data Ingestion Layer</h3>
+                <div class="legend-item">
+                    <span class="icon">🌐</span>
+                    <div>
+                        <strong>Wikipedia EventStreams</strong> <span class="status status-live">LIVE</span><br/>
+                        Real-time SSE feed of all Wikipedia edits across multiple wikis
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">🐳</span>
+                    <div>
+                        <strong>ECS Fargate Producer</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Python service consuming SSE, producing to Kafka with IAM auth
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">📡</span>
+                    <div>
+                        <strong>Amazon MSK (KRaft)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Kafka 3.9.x cluster, topics: raw-events (main), dlq-events (dead letter)
+                    </div>
+                </div>
+            </div>
+
+            <div class="legend-section">
+                <h3>⚡ Processing Layer (EMR Serverless)</h3>
+                <div class="legend-item">
+                    <span class="icon">🥉</span>
+                    <div>
+                        <strong>Bronze Streaming Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Spark Structured Streaming, 30s micro-batches, MERGE INTO Iceberg
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">🥈</span>
+                    <div>
+                        <strong>Silver Batch Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Deduplication, normalization, data type standardization
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">🔍</span>
+                    <div>
+                        <strong>Data Quality Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        AWS Deequ validation: completeness, uniqueness, validity checks
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">🥇</span>
+                    <div>
+                        <strong>Gold Batch Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Aggregations: hourly_edit_stats, entity_trends, risk_scores
+                    </div>
+                </div>
+            </div>
+
+            <div class="legend-section">
+                <h3>💾 Storage Layer</h3>
+                <div class="legend-item">
+                    <span class="icon">📊</span>
+                    <div>
+                        <strong>S3 Tables (Apache Iceberg)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Managed Iceberg tables with ACID transactions, time travel, schema evolution
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">📦</span>
+                    <div>
+                        <strong>S3 Bucket</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Spark checkpoints, EMR logs, job artifacts (.py files)
+                    </div>
+                </div>
+            </div>
+
+            <div class="legend-section">
+                <h3>📈 Orchestration & Monitoring</h3>
+                <div class="legend-item">
+                    <span class="icon">⚙️</span>
+                    <div>
+                        <strong>Step Functions</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Unified batch pipeline: Silver → DQ → Gold (sequential execution)
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">⏰</span>
+                    <div>
+                        <strong>EventBridge</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Scheduled triggers for batch pipeline (every 5 minutes)
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">λ</span>
+                    <div>
+                        <strong>Lambda Auto-Restart</strong> <span class="status status-auto">AUTO-RECOVERY</span><br/>
+                        Automatically restarts Bronze job on health check failure
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">📊</span>
+                    <div>
+                        <strong>CloudWatch Dashboard</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Pipeline health, metrics, alarms, log aggregation
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tech Stack -->
+        <div class="tech-stack">
+            <h3>🔧 Technology Stack</h3>
+            <div class="tech-grid">
+                <div class="tech-item">
+                    <strong>Compute</strong>
+                    <span>EMR Serverless (Spark 3.5), ECS Fargate, Lambda</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Streaming</strong>
+                    <span>Amazon MSK (Kafka 3.9.x, KRaft mode)</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Table Format</strong>
+                    <span>Apache Iceberg 1.10.0 via S3 Tables</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Data Quality</strong>
+                    <span>AWS Deequ 2.0.7</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Languages</strong>
+                    <span>Python 3.12, PySpark, SQL</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Infrastructure</strong>
+                    <span>Terraform 1.6+, AWS Provider 5.80</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Orchestration</strong>
+                    <span>Step Functions, EventBridge</span>
+                </div>
+                <div class="tech-item">
+                    <strong>Monitoring</strong>
+                    <span>CloudWatch, SNS, X-Ray</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Flow Summary -->
+        <div class="legend-section" style="margin-top: 30px;">
+            <h3>🔄 Data Flow Summary</h3>
+            <div style="font-family: monospace; background: #1a1a2e; padding: 20px; border-radius: 8px; overflow-x: auto;">
+                <pre style="color: #8ecae6; margin: 0;">
+┌──────────────────┐     ┌──────────────┐     ┌─────────────────────────────────────────────────────────────┐
+│   Wikipedia      │     │   Amazon     │     │                  EMR Serverless (Spark)                     │
+│  EventStreams    │────▶│     MSK      │────▶│  ┌─────────┐   ┌─────────┐   ┌────────┐   ┌─────────┐     │
+│   (SSE Feed)     │     │  (Kafka)     │     │  │ Bronze  │──▶│ Silver  │──▶│   DQ   │──▶│  Gold   │     │
+└──────────────────┘     └──────────────┘     │  │Streaming│   │  Batch  │   │ Check  │   │  Batch  │     │
+        │                       │             │  └────┬────┘   └────┬────┘   └────┬───┘   └────┬────┘     │
+        │                       │             └───────│─────────────│─────────────│────────────│──────────┘
+        ▼                       ▼                     │             │             │            │
+┌──────────────────┐     ┌──────────────┐            │             │             │            │
+│   ECS Fargate    │     │   raw-events │            ▼             ▼             ▼            ▼
+│  Kafka Producer  │────▶│  dlq-events  │     ┌─────────────────────────────────────────────────────────────┐
+│  (Python/SSE)    │     │   (Topics)   │     │                   S3 Tables (Apache Iceberg)                │
+└──────────────────┘     └──────────────┘     │  bronze.wiki_events │ silver.wiki_events │ gold.* tables   │
+                                              └─────────────────────────────────────────────────────────────┘
+                </pre>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="text-align: center; margin-top: 40px; padding: 20px; border-top: 1px solid rgba(255,153,0,0.3);">
+            <p style="color: #888;">WikiStream Pipeline v1.0 • Built with AWS Serverless Technologies</p>
+            <p style="color: #666; font-size: 0.85rem;">All components implemented and operational ✓</p>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'base',
+            flowchart: {
+                useMaxWidth: true,
+                htmlLabels: true,
+                curve: 'basis'
+            }
+        });
+    </script>
+</body>
+</html>
+

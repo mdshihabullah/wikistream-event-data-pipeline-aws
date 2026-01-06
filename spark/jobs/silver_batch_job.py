@@ -13,8 +13,8 @@ from datetime import datetime, timedelta
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, when, lit, regexp_replace, lower, trim,
-    current_timestamp, date_format, substring, length
+    col, when, lit, regexp_replace, trim,
+    current_timestamp, substring
 )
 
 
@@ -134,11 +134,13 @@ def add_quality_flags(df):
 
 def transform_bronze_to_silver(df):
     """Apply all transformations for Silver layer."""
+    # Apply transformations sequentially (PySpark doesn't have pipe method)
+    df = add_region_columns(df)
+    df = clean_user_column(df)
+    df = add_quality_flags(df)
+    
     return (
         df
-        .pipe(add_region_columns)
-        .pipe(clean_user_column)
-        .pipe(add_quality_flags)
         .withColumn("silver_processed_at", current_timestamp())
         .withColumn("schema_version", lit(SCHEMA_VERSION))
         # Select Silver columns
@@ -169,7 +171,7 @@ def transform_bronze_to_silver(df):
             "schema_version"
         )
         # Only include valid events
-        .filter(col("is_valid") == True)
+        .filter(col("is_valid"))
     )
 
 
@@ -178,14 +180,21 @@ def transform_bronze_to_silver(df):
 # =============================================================================
 
 def main():
-    """Main entry point for Silver batch job."""
+    """Main entry point for Silver batch job.
+    
+    Optimized for ≤5 minute SLA:
+    - Default lookback: 1 hour (process recent data quickly)
+    - Incremental processing: only new Bronze records
+    - Resource efficient: 4 vCPU total (1 driver + 1 executor × 2 vCPU)
+    """
     print("=" * 60)
     print("WikiStream Silver Batch Job")
     print(f"Started at: {datetime.utcnow().isoformat()}")
     print("=" * 60)
     
-    # Parse arguments: lookback_hours (default 24 hours to capture all recent data)
-    lookback_hours = 24
+    # Parse arguments: lookback_hours (default 1 hour for fast incremental processing)
+    # Use 24 for backfill scenarios
+    lookback_hours = 1
     if len(sys.argv) >= 2:
         lookback_hours = int(sys.argv[1])
     
@@ -267,9 +276,20 @@ def main():
     incoming_count = spark.sql("SELECT COUNT(*) FROM incoming_silver").collect()[0][0]
     print(f"Incoming Silver records: {incoming_count}")
     
+    # Add schema_version column if it doesn't exist (for existing tables)
+    try:
+        spark.sql("""
+            ALTER TABLE s3tablesbucket.silver.cleaned_events 
+            ADD COLUMN schema_version STRING
+        """)
+        print("Added schema_version column to silver table")
+    except Exception as e:
+        # Column already exists or table doesn't exist yet
+        pass
+    
     # MERGE for idempotent upsert (no duplicates on replay)
     # Note: Iceberg requires explicit column lists, not UPDATE SET * or INSERT *
-    merge_result = spark.sql("""
+    spark.sql("""
         MERGE INTO s3tablesbucket.silver.cleaned_events AS target
         USING incoming_silver AS source
         ON target.event_id = source.event_id

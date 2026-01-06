@@ -43,8 +43,8 @@ KAFKA_TOPIC = "raw-events"
 KAFKA_DLQ_TOPIC = "dlq-events"
 
 # Processing config
-TRIGGER_INTERVAL = "30 seconds"  # Micro-batch interval
-WATERMARK_DELAY = "5 minutes"    # Allow late events up to 5 minutes
+TRIGGER_INTERVAL = "3 minutes"  # For reducing no of snapshots 
+WATERMARK_DELAY = "10 minutes"    # Allow late events up to 10 minutes
 SCHEMA_VERSION = "1.0.0"         # Track schema version for evolution
 
 

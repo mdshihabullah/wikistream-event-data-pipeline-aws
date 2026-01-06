@@ -2,10 +2,14 @@
 """
 WikiStream Data Quality Job
 ===========================
-Runs Deequ data quality checks on Bronze, Silver, and Gold tables.
+Runs data quality checks on Bronze, Silver, and Gold tables.
 Publishes metrics to CloudWatch and alerts on failures via SNS.
 
 This job runs on EMR Serverless, triggered by Step Functions.
+
+NOTE: PyDeequ may have compatibility issues with EMR Serverless.
+This implementation includes a fallback to SQL-based checks if Deequ fails.
+Optimized for 4 vCPU (1 driver + 1 executor × 2 vCPU)
 """
 
 import sys
@@ -14,12 +18,21 @@ import boto3
 from datetime import datetime
 
 from pyspark.sql import SparkSession
-from pydeequ.checks import Check, CheckLevel
-from pydeequ.verification import VerificationSuite, VerificationResult
-from pydeequ.analyzers import (
-    Size, Completeness, Uniqueness, Distinctness,
-    Mean, StandardDeviation, Minimum, Maximum
-)
+from pyspark.sql.functions import col, count, countDistinct, when, lit
+
+# Try to import Deequ, fall back to SQL-based checks if unavailable
+DEEQU_AVAILABLE = False
+try:
+    from pydeequ.checks import Check, CheckLevel
+    from pydeequ.verification import VerificationSuite, VerificationResult
+    from pydeequ.analyzers import (
+        Size, Completeness, Uniqueness, Distinctness,
+        Mean, StandardDeviation, Minimum, Maximum
+    )
+    DEEQU_AVAILABLE = True
+    print("PyDeequ imported successfully")
+except ImportError as e:
+    print(f"PyDeequ not available, using SQL-based checks: {e}")
 
 
 # =============================================================================
@@ -36,7 +49,10 @@ CLOUDWATCH_NAMESPACE = "WikiStream/DataQuality"
 # =============================================================================
 
 def create_spark_session() -> SparkSession:
-    """Create SparkSession with Deequ and S3 Tables Catalog support."""
+    """Create SparkSession with S3 Tables Catalog support.
+    
+    Note: Deequ package is loaded via spark-submit parameters.
+    """
     return (
         SparkSession.builder
         .appName("WikiStream-DataQuality")
@@ -48,9 +64,6 @@ def create_spark_session() -> SparkSession:
         .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
         # Iceberg timestamp handling
         .config("spark.sql.iceberg.handle-timestamp-without-timezone", "true")
-        # S3 Tables Catalog (config passed via spark-submit)
-        # Deequ requires
-        .config("spark.jars.packages", "com.amazon.deequ:deequ:2.0.7-spark-3.5")
         .getOrCreate()
     )
 
@@ -59,35 +72,166 @@ def create_spark_session() -> SparkSession:
 # Data Quality Checks
 # =============================================================================
 
+def check_bronze_quality_sql(spark, verification_results: list):
+    """SQL-based Bronze quality checks (fallback when Deequ unavailable)."""
+    print("\n" + "=" * 50)
+    print("BRONZE TABLE QUALITY CHECKS (SQL-based)")
+    print("=" * 50)
+    
+    try:
+        # Get recent data (last 2 hours for incremental processing)
+        bronze_df = spark.sql("""
+            SELECT * FROM s3tablesbucket.bronze.raw_events
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
+        """)
+        
+        row_count = bronze_df.count()
+        print(f"Bronze rows (recent): {row_count}")
+        
+        if row_count == 0:
+            print("⚠️  No recent data in Bronze table")
+            verification_results.append({
+                "table": "bronze.raw_events",
+                "check": "row_count",
+                "status": "WARNING",
+                "message": "No recent data",
+                "value": 0
+            })
+            return
+        
+        # Check 1: Row count > 0
+        verification_results.append({
+            "table": "bronze.raw_events",
+            "check": "hasSize",
+            "status": "PASSED",
+            "message": f"Table has {row_count} rows",
+            "value": row_count
+        })
+        print(f"  ✅ hasSize: PASSED ({row_count} rows)")
+        
+        # Check 2: event_id completeness
+        null_event_ids = spark.sql("""
+            SELECT COUNT(*) as cnt FROM s3tablesbucket.bronze.raw_events
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1) AND event_id IS NULL
+        """).collect()[0].cnt
+        
+        if null_event_ids == 0:
+            verification_results.append({
+                "table": "bronze.raw_events",
+                "check": "isComplete(event_id)",
+                "status": "PASSED",
+                "message": "All event_ids present"
+            })
+            print("  ✅ isComplete(event_id): PASSED")
+        else:
+            verification_results.append({
+                "table": "bronze.raw_events",
+                "check": "isComplete(event_id)",
+                "status": "FAILED",
+                "message": f"{null_event_ids} null event_ids"
+            })
+            print(f"  ❌ isComplete(event_id): FAILED ({null_event_ids} nulls)")
+        
+        # Check 3: event_id uniqueness
+        dup_count = spark.sql("""
+            SELECT COUNT(*) as cnt FROM (
+                SELECT event_id, COUNT(*) as c 
+                FROM s3tablesbucket.bronze.raw_events
+                WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
+                GROUP BY event_id HAVING COUNT(*) > 1
+            )
+        """).collect()[0].cnt
+        
+        if dup_count == 0:
+            verification_results.append({
+                "table": "bronze.raw_events",
+                "check": "isUnique(event_id)",
+                "status": "PASSED",
+                "message": "All event_ids unique"
+            })
+            print("  ✅ isUnique(event_id): PASSED")
+        else:
+            verification_results.append({
+                "table": "bronze.raw_events",
+                "check": "isUnique(event_id)",
+                "status": "FAILED",
+                "message": f"{dup_count} duplicate event_ids"
+            })
+            print(f"  ❌ isUnique(event_id): FAILED ({dup_count} duplicates)")
+        
+        # Check 4: event_type completeness and validity
+        invalid_types = spark.sql("""
+            SELECT COUNT(*) as cnt FROM s3tablesbucket.bronze.raw_events
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
+              AND (event_type IS NULL OR event_type NOT IN ('edit', 'new', 'log', 'categorize', 'external'))
+        """).collect()[0].cnt
+        
+        if invalid_types == 0:
+            verification_results.append({
+                "table": "bronze.raw_events",
+                "check": "isContainedIn(event_type)",
+                "status": "PASSED",
+                "message": "All event_types valid"
+            })
+            print("  ✅ isContainedIn(event_type): PASSED")
+        else:
+            # Allow some invalid types (data from external sources)
+            pct = (invalid_types / row_count) * 100
+            if pct < 5:  # Less than 5% is acceptable
+                verification_results.append({
+                    "table": "bronze.raw_events",
+                    "check": "isContainedIn(event_type)",
+                    "status": "PASSED",
+                    "message": f"{invalid_types} unknown types ({pct:.1f}%)"
+                })
+                print(f"  ✅ isContainedIn(event_type): PASSED ({pct:.1f}% unknown)")
+            else:
+                verification_results.append({
+                    "table": "bronze.raw_events",
+                    "check": "isContainedIn(event_type)",
+                    "status": "FAILED",
+                    "message": f"{invalid_types} invalid ({pct:.1f}%)"
+                })
+                print(f"  ❌ isContainedIn(event_type): FAILED ({pct:.1f}% invalid)")
+                
+    except Exception as e:
+        print(f"❌ Bronze check failed: {e}")
+        verification_results.append({
+            "table": "bronze.raw_events",
+            "check": "execution",
+            "status": "ERROR",
+            "message": str(e)
+        })
+
+
 def check_bronze_quality(spark, verification_results: list):
     """
     Run data quality checks on Bronze table.
-    
-    Checks:
-    - Completeness of required fields
-    - Uniqueness of event_id
-    - Data freshness
+    Uses PyDeequ if available, falls back to SQL checks.
     """
+    if not DEEQU_AVAILABLE:
+        return check_bronze_quality_sql(spark, verification_results)
+    
     print("\n" + "=" * 50)
-    print("BRONZE TABLE QUALITY CHECKS")
+    print("BRONZE TABLE QUALITY CHECKS (Deequ)")
     print("=" * 50)
     
     try:
         bronze_df = spark.sql("""
             SELECT * FROM s3tablesbucket.bronze.raw_events
-            WHERE event_date = CURRENT_DATE()
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
         """)
         
         row_count = bronze_df.count()
-        print(f"Bronze rows (today): {row_count}")
+        print(f"Bronze rows (recent): {row_count}")
         
         if row_count == 0:
-            print("⚠️  No data in Bronze table for today")
+            print("⚠️  No recent data in Bronze table")
             verification_results.append({
                 "table": "bronze.raw_events",
                 "check": "row_count",
                 "status": "WARNING",
-                "message": "No data for today",
+                "message": "No recent data",
                 "value": 0
             })
             return
@@ -122,9 +266,122 @@ def check_bronze_quality(spark, verification_results: list):
             print(f"  {'✅' if status == 'PASSED' else '❌'} {row.constraint}: {status}")
         
     except Exception as e:
-        print(f"❌ Bronze check failed: {e}")
+        print(f"⚠️  Deequ check failed, falling back to SQL: {e}")
+        check_bronze_quality_sql(spark, verification_results)
+
+
+def check_silver_quality_sql(spark, verification_results: list):
+    """SQL-based Silver quality checks (fallback when Deequ unavailable)."""
+    print("\n" + "=" * 50)
+    print("SILVER TABLE QUALITY CHECKS (SQL-based)")
+    print("=" * 50)
+    
+    try:
+        row_count = spark.sql("""
+            SELECT COUNT(*) as cnt FROM s3tablesbucket.silver.cleaned_events
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
+        """).collect()[0].cnt
+        
+        print(f"Silver rows (recent): {row_count}")
+        
+        if row_count == 0:
+            print("⚠️  No recent data in Silver table")
+            verification_results.append({
+                "table": "silver.cleaned_events",
+                "check": "row_count",
+                "status": "WARNING",
+                "message": "No recent data",
+                "value": 0
+            })
+            return
+        
+        # Check 1: Has data
         verification_results.append({
-            "table": "bronze.raw_events",
+            "table": "silver.cleaned_events",
+            "check": "hasSize",
+            "status": "PASSED",
+            "message": f"Table has {row_count} rows",
+            "value": row_count
+        })
+        print(f"  ✅ hasSize: PASSED ({row_count} rows)")
+        
+        # Check 2: event_id uniqueness (critical for dedup verification)
+        dup_count = spark.sql("""
+            SELECT COUNT(*) as cnt FROM (
+                SELECT event_id FROM s3tablesbucket.silver.cleaned_events
+                WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
+                GROUP BY event_id HAVING COUNT(*) > 1
+            )
+        """).collect()[0].cnt
+        
+        if dup_count == 0:
+            verification_results.append({
+                "table": "silver.cleaned_events",
+                "check": "isUnique(event_id)",
+                "status": "PASSED",
+                "message": "All event_ids unique"
+            })
+            print("  ✅ isUnique(event_id): PASSED")
+        else:
+            verification_results.append({
+                "table": "silver.cleaned_events",
+                "check": "isUnique(event_id)",
+                "status": "FAILED",
+                "message": f"{dup_count} duplicate event_ids"
+            })
+            print(f"  ❌ isUnique(event_id): FAILED ({dup_count} duplicates)")
+        
+        # Check 3: region values
+        invalid_regions = spark.sql("""
+            SELECT COUNT(*) as cnt FROM s3tablesbucket.silver.cleaned_events
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
+              AND region NOT IN ('asia_pacific', 'europe', 'americas', 'middle_east', 'other')
+        """).collect()[0].cnt
+        
+        if invalid_regions == 0:
+            verification_results.append({
+                "table": "silver.cleaned_events",
+                "check": "isContainedIn(region)",
+                "status": "PASSED",
+                "message": "All regions valid"
+            })
+            print("  ✅ isContainedIn(region): PASSED")
+        else:
+            verification_results.append({
+                "table": "silver.cleaned_events",
+                "check": "isContainedIn(region)",
+                "status": "FAILED",
+                "message": f"{invalid_regions} invalid regions"
+            })
+            print(f"  ❌ isContainedIn(region): FAILED ({invalid_regions} invalid)")
+        
+        # Check 4: is_valid should be true for all
+        invalid_records = spark.sql("""
+            SELECT COUNT(*) as cnt FROM s3tablesbucket.silver.cleaned_events
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1) AND is_valid != true
+        """).collect()[0].cnt
+        
+        if invalid_records == 0:
+            verification_results.append({
+                "table": "silver.cleaned_events",
+                "check": "satisfies(is_valid)",
+                "status": "PASSED",
+                "message": "All records valid"
+            })
+            print("  ✅ satisfies(is_valid): PASSED")
+        else:
+            verification_results.append({
+                "table": "silver.cleaned_events",
+                "check": "satisfies(is_valid)",
+                "status": "FAILED",
+                "message": f"{invalid_records} invalid records"
+            })
+            print(f"  ❌ satisfies(is_valid): FAILED ({invalid_records} invalid)")
+            
+    except Exception as e:
+        print(f"❌ Silver check failed: {e}")
+        verification_results.append({
+            "table": "silver.cleaned_events",
             "check": "execution",
             "status": "ERROR",
             "message": str(e)
@@ -134,32 +391,31 @@ def check_bronze_quality(spark, verification_results: list):
 def check_silver_quality(spark, verification_results: list):
     """
     Run data quality checks on Silver table.
-    
-    Checks:
-    - Completeness after cleaning
-    - No duplicates (deduplication worked)
-    - Valid transformations
+    Uses PyDeequ if available, falls back to SQL checks.
     """
+    if not DEEQU_AVAILABLE:
+        return check_silver_quality_sql(spark, verification_results)
+    
     print("\n" + "=" * 50)
-    print("SILVER TABLE QUALITY CHECKS")
+    print("SILVER TABLE QUALITY CHECKS (Deequ)")
     print("=" * 50)
     
     try:
         silver_df = spark.sql("""
             SELECT * FROM s3tablesbucket.silver.cleaned_events
-            WHERE event_date = CURRENT_DATE()
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
         """)
         
         row_count = silver_df.count()
-        print(f"Silver rows (today): {row_count}")
+        print(f"Silver rows (recent): {row_count}")
         
         if row_count == 0:
-            print("⚠️  No data in Silver table for today")
+            print("⚠️  No recent data in Silver table")
             verification_results.append({
                 "table": "silver.cleaned_events",
                 "check": "row_count",
                 "status": "WARNING",
-                "message": "No data for today",
+                "message": "No recent data",
                 "value": 0
             })
             return
@@ -195,7 +451,7 @@ def check_silver_quality(spark, verification_results: list):
         dup_check = spark.sql("""
             SELECT event_id, COUNT(*) as cnt
             FROM s3tablesbucket.silver.cleaned_events
-            WHERE event_date = CURRENT_DATE()
+            WHERE event_date >= DATE_SUB(CURRENT_DATE(), 1)
             GROUP BY event_id
             HAVING COUNT(*) > 1
         """).count()
@@ -217,12 +473,134 @@ def check_silver_quality(spark, verification_results: list):
                 "message": "No duplicates found",
                 "value": 0
             })
-            print(f"  ✅ Duplicate check: PASSED")
+            print("  ✅ Duplicate check: PASSED")
         
     except Exception as e:
-        print(f"❌ Silver check failed: {e}")
+        print(f"⚠️  Deequ check failed, falling back to SQL: {e}")
+        check_silver_quality_sql(spark, verification_results)
+
+
+def check_gold_quality_sql(spark, verification_results: list):
+    """SQL-based Gold quality checks (fallback when Deequ unavailable)."""
+    print("\n" + "=" * 50)
+    print("GOLD TABLE QUALITY CHECKS (SQL-based)")
+    print("=" * 50)
+    
+    # Check hourly_stats
+    try:
+        row_count = spark.sql("""
+            SELECT COUNT(*) as cnt FROM s3tablesbucket.gold.hourly_stats
+            WHERE stat_date >= DATE_SUB(CURRENT_DATE(), 1)
+        """).collect()[0].cnt
+        
+        print(f"Gold hourly_stats rows (recent): {row_count}")
+        
+        if row_count > 0:
+            verification_results.append({
+                "table": "gold.hourly_stats",
+                "check": "hasSize",
+                "status": "PASSED",
+                "message": f"Table has {row_count} rows"
+            })
+            print(f"  ✅ hasSize: PASSED ({row_count} rows)")
+            
+            # Check for negative values
+            invalid = spark.sql("""
+                SELECT COUNT(*) as cnt FROM s3tablesbucket.gold.hourly_stats
+                WHERE stat_date >= DATE_SUB(CURRENT_DATE(), 1)
+                  AND (total_events < 0 OR unique_users < 0 
+                       OR bot_percentage < 0 OR bot_percentage > 100)
+            """).collect()[0].cnt
+            
+            if invalid == 0:
+                verification_results.append({
+                    "table": "gold.hourly_stats",
+                    "check": "value_ranges",
+                    "status": "PASSED",
+                    "message": "All values in valid ranges"
+                })
+                print("  ✅ value_ranges: PASSED")
+            else:
+                verification_results.append({
+                    "table": "gold.hourly_stats",
+                    "check": "value_ranges",
+                    "status": "FAILED",
+                    "message": f"{invalid} rows with invalid values"
+                })
+                print(f"  ❌ value_ranges: FAILED ({invalid} invalid)")
+        else:
+            verification_results.append({
+                "table": "gold.hourly_stats",
+                "check": "hasSize",
+                "status": "WARNING",
+                "message": "No recent data"
+            })
+            print("  ⚠️  hasSize: WARNING (no recent data)")
+            
+    except Exception as e:
+        print(f"❌ Gold hourly_stats check failed: {e}")
         verification_results.append({
-            "table": "silver.cleaned_events",
+            "table": "gold.hourly_stats",
+            "check": "execution",
+            "status": "ERROR",
+            "message": str(e)
+        })
+    
+    # Check risk_scores
+    try:
+        row_count = spark.sql("""
+            SELECT COUNT(*) as cnt FROM s3tablesbucket.gold.risk_scores
+            WHERE stat_date >= DATE_SUB(CURRENT_DATE(), 1)
+        """).collect()[0].cnt
+        
+        print(f"Gold risk_scores rows (recent): {row_count}")
+        
+        if row_count > 0:
+            verification_results.append({
+                "table": "gold.risk_scores",
+                "check": "hasSize",
+                "status": "PASSED",
+                "message": f"Table has {row_count} rows"
+            })
+            print(f"  ✅ hasSize: PASSED ({row_count} rows)")
+            
+            # Check risk_score range
+            invalid = spark.sql("""
+                SELECT COUNT(*) as cnt FROM s3tablesbucket.gold.risk_scores
+                WHERE stat_date >= DATE_SUB(CURRENT_DATE(), 1)
+                  AND (risk_score < 0 OR risk_score > 100
+                       OR risk_level NOT IN ('LOW', 'MEDIUM', 'HIGH'))
+            """).collect()[0].cnt
+            
+            if invalid == 0:
+                verification_results.append({
+                    "table": "gold.risk_scores",
+                    "check": "risk_score_range",
+                    "status": "PASSED",
+                    "message": "All scores in valid range [0-100]"
+                })
+                print("  ✅ risk_score_range: PASSED")
+            else:
+                verification_results.append({
+                    "table": "gold.risk_scores",
+                    "check": "risk_score_range",
+                    "status": "FAILED",
+                    "message": f"{invalid} rows with invalid scores"
+                })
+                print(f"  ❌ risk_score_range: FAILED ({invalid} invalid)")
+        else:
+            verification_results.append({
+                "table": "gold.risk_scores",
+                "check": "hasSize",
+                "status": "WARNING",
+                "message": "No recent data"
+            })
+            print("  ⚠️  hasSize: WARNING (no recent data)")
+            
+    except Exception as e:
+        print(f"❌ Gold risk_scores check failed: {e}")
+        verification_results.append({
+            "table": "gold.risk_scores",
             "check": "execution",
             "status": "ERROR",
             "message": str(e)
@@ -232,25 +610,24 @@ def check_silver_quality(spark, verification_results: list):
 def check_gold_quality(spark, verification_results: list):
     """
     Run data quality checks on Gold tables.
-    
-    Checks:
-    - Aggregation consistency
-    - Risk score validity
-    - Data freshness
+    Uses PyDeequ if available, falls back to SQL checks.
     """
+    if not DEEQU_AVAILABLE:
+        return check_gold_quality_sql(spark, verification_results)
+    
     print("\n" + "=" * 50)
-    print("GOLD TABLE QUALITY CHECKS")
+    print("GOLD TABLE QUALITY CHECKS (Deequ)")
     print("=" * 50)
     
     # Check hourly_stats
     try:
         stats_df = spark.sql("""
             SELECT * FROM s3tablesbucket.gold.hourly_stats
-            WHERE stat_date = CURRENT_DATE()
+            WHERE stat_date >= DATE_SUB(CURRENT_DATE(), 1)
         """)
         
         row_count = stats_df.count()
-        print(f"Gold hourly_stats rows (today): {row_count}")
+        print(f"Gold hourly_stats rows (recent): {row_count}")
         
         if row_count > 0:
             check = (
@@ -276,23 +653,19 @@ def check_gold_quality(spark, verification_results: list):
                 })
                 print(f"  {'✅' if status == 'PASSED' else '❌'} {row.constraint}: {status}")
     except Exception as e:
-        print(f"❌ Gold hourly_stats check failed: {e}")
-        verification_results.append({
-            "table": "gold.hourly_stats",
-            "check": "execution",
-            "status": "ERROR",
-            "message": str(e)
-        })
+        print(f"⚠️  Deequ check failed, falling back to SQL: {e}")
+        check_gold_quality_sql(spark, verification_results)
+        return
     
     # Check risk_scores
     try:
         risk_df = spark.sql("""
             SELECT * FROM s3tablesbucket.gold.risk_scores
-            WHERE stat_date = CURRENT_DATE()
+            WHERE stat_date >= DATE_SUB(CURRENT_DATE(), 1)
         """)
         
         row_count = risk_df.count()
-        print(f"Gold risk_scores rows (today): {row_count}")
+        print(f"Gold risk_scores rows (recent): {row_count}")
         
         if row_count > 0:
             check = (
