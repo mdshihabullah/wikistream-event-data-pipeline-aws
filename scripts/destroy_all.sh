@@ -56,8 +56,8 @@ echo ""
 echo "🗑️  Step 2: Deleting S3 Tables..."
 TABLE_BUCKET_ARN="arn:aws:s3tables:${AWS_REGION}:${AWS_ACCOUNT_ID}:bucket/wikistream-dev-tables"
 
-# Delete tables in each namespace
-for NS in bronze silver gold; do
+# Delete tables in each namespace (including dq_audit)
+for NS in bronze silver gold dq_audit; do
     TABLES=$(aws s3tables list-tables --table-bucket-arn $TABLE_BUCKET_ARN --namespace $NS --query 'tables[*].name' --output text 2>/dev/null || echo "")
     for TABLE in $TABLES; do
         echo "   Deleting ${NS}.${TABLE}..."
@@ -65,8 +65,8 @@ for NS in bronze silver gold; do
     done
 done
 
-# Delete namespaces
-for NS in bronze silver gold; do
+# Delete namespaces (including dq_audit)
+for NS in bronze silver gold dq_audit; do
     aws s3tables delete-namespace --table-bucket-arn $TABLE_BUCKET_ARN --namespace $NS 2>/dev/null || true
 done
 

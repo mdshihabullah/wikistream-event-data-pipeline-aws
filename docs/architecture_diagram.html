@@ -83,6 +83,7 @@
         .status-live { background: #2ecc71; color: #000; }
         .status-implemented { background: #3498db; color: #fff; }
         .status-auto { background: #9b59b6; color: #fff; }
+        .status-dq { background: #e74c3c; color: #fff; }
         .tech-stack {
             background: rgba(255,255,255,0.03);
             border-radius: 8px;
@@ -119,7 +120,7 @@
         }
         .metrics {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: 15px;
             margin-top: 20px;
         }
@@ -139,15 +140,46 @@
             font-size: 0.85rem;
             color: #8ecae6;
         }
+        .dq-section {
+            background: rgba(231,76,60,0.1);
+            border: 1px solid rgba(231,76,60,0.3);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+        .dq-section h3 {
+            color: #e74c3c;
+            margin-bottom: 15px;
+        }
+        .dq-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+        .dq-item {
+            background: rgba(231,76,60,0.05);
+            border-radius: 6px;
+            padding: 12px;
+        }
+        .dq-item strong {
+            color: #e74c3c;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .dq-checks {
+            font-size: 0.8rem;
+            color: #aaa;
+        }
         @media (max-width: 768px) {
             .metrics { grid-template-columns: repeat(2, 1fr); }
+            .dq-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🌐 WikiStream Event Data Pipeline</h1>
-        <p class="subtitle">Real-time Wikipedia Edit Stream Processing on AWS • Medallion Architecture</p>
+        <p class="subtitle">Real-time Wikipedia Edit Stream Processing on AWS • Medallion Architecture with Data Quality Gates</p>
         
         <!-- Key Metrics -->
         <div class="metrics">
@@ -156,12 +188,16 @@
                 <div class="label">Bronze Ingestion</div>
             </div>
             <div class="metric-box">
+                <div class="value">95%</div>
+                <div class="label">Timeliness (&lt;1min)</div>
+            </div>
+            <div class="metric-box">
                 <div class="value">≤5min</div>
                 <div class="label">End-to-End SLA</div>
             </div>
             <div class="metric-box">
                 <div class="value">3</div>
-                <div class="label">Medallion Layers</div>
+                <div class="label">DQ Gates</div>
             </div>
             <div class="metric-box">
                 <div class="value">24/7</div>
@@ -193,29 +229,33 @@ flowchart TB
             end
             
             subgraph BATCH_LAYER["🔵 BATCH LAYER (Step Functions)"]
+                BRONZE_DQ["🔍 Bronze DQ Gate<br/><b>Deequ Checks</b><br/><i>Completeness, Timeliness</i>"]
                 SILVER_JOB["🥈 Silver Batch Job<br/><b>Data Cleansing</b><br/><i>Deduplication, Normalization</i>"]
-                DQ_JOB["🔍 Data Quality Job<br/><b>AWS Deequ</b><br/><i>Completeness, Validity</i>"]
+                SILVER_DQ["🔍 Silver DQ Gate<br/><b>Deequ Checks</b><br/><i>Accuracy, Drift Detection</i>"]
                 GOLD_JOB["🥇 Gold Batch Job<br/><b>Aggregations</b><br/><i>Hourly Stats, Entity Trends</i>"]
+                GOLD_DQ["🔍 Gold DQ Gate<br/><b>Deequ Checks</b><br/><i>Validation, Consistency</i>"]
             end
         end
     end
 
     subgraph STORAGE["💾 DATA LAKE STORAGE"]
         subgraph S3TABLES["📊 S3 Tables (Apache Iceberg)"]
-            BRONZE_TBL["🥉 bronze.wiki_events<br/><i>Raw ingested events</i><br/>Partitioned by date/hour"]
-            SILVER_TBL["🥈 silver.wiki_events_cleaned<br/><i>Deduplicated & normalized</i>"]
-            GOLD_TBL["🥇 gold.*<br/><i>hourly_edit_stats</i><br/><i>entity_trends</i><br/><i>risk_scores</i>"]
+            BRONZE_TBL["🥉 bronze.raw_events<br/><i>Raw ingested events</i><br/>Partitioned by date/hour"]
+            SILVER_TBL["🥈 silver.cleaned_events<br/><i>Deduplicated & normalized</i>"]
+            GOLD_TBL["🥇 gold.*<br/><i>hourly_stats</i><br/><i>entity_trends</i><br/><i>risk_scores</i>"]
+            DQ_AUDIT["📋 dq_audit.*<br/><i>quality_results</i><br/><i>profile_metrics</i>"]
         end
         
         S3["📦 S3 Bucket<br/><i>Checkpoints, Logs</i><br/><i>Spark Jobs (.py)</i>"]
     end
 
     subgraph MONITORING["📈 MONITORING & ORCHESTRATION"]
-        SFN["⚙️ Step Functions<br/><b>Batch Pipeline</b><br/><i>Silver → DQ → Gold</i><br/>Every 5 minutes"]
-        CW["📊 CloudWatch<br/><i>Metrics, Logs, Dashboard</i><br/><i>Alarms</i>"]
-        SNS["📧 SNS<br/><i>Alerts & Notifications</i>"]
+        SFN["⚙️ Step Functions<br/><b>Batch Pipeline</b><br/><i>Bronze DQ → Silver → Silver DQ → Gold → Gold DQ</i>"]
+        CW["📊 CloudWatch<br/><i>Metrics, Logs, Dashboard</i><br/><i>DQ Alarms</i>"]
+        SNS["📧 SNS<br/><i>DQ Failure Alerts</i><br/><i>Drift Notifications</i>"]
         LAMBDA["λ Lambda<br/><b>Auto-Restart</b><br/><i>Bronze Job Recovery</i>"]
-        EB["⏰ EventBridge<br/><i>Scheduled Triggers</i>"]
+        EB["⏰ EventBridge<br/><i>Every 5 min Trigger</i>"]
+        GRAFANA["📊 Grafana<br/><i>Local Dashboard</i><br/><i>CloudWatch Integration</i>"]
     end
 
     subgraph DEVOPS["🛠️ INFRASTRUCTURE"]
@@ -231,27 +271,44 @@ flowchart TB
     BRONZE_JOB -->|"MERGE INTO"| BRONZE_TBL
     BRONZE_JOB -->|"Checkpoints"| S3
     
+    BRONZE_TBL -->|"Validate"| BRONZE_DQ
+    BRONZE_DQ -->|"Pass ✅"| SILVER_JOB
+    BRONZE_DQ -->|"Audit"| DQ_AUDIT
+    
     BRONZE_TBL -->|"Read"| SILVER_JOB
     SILVER_JOB -->|"Write"| SILVER_TBL
     
-    SILVER_TBL -->|"Validate"| DQ_JOB
-    DQ_JOB -->|"Quality Metrics"| CW
+    SILVER_TBL -->|"Validate"| SILVER_DQ
+    SILVER_DQ -->|"Audit"| DQ_AUDIT
+    SILVER_DQ -->|"Pass ✅"| GOLD_JOB
     
     SILVER_TBL -->|"Read"| GOLD_JOB
     GOLD_JOB -->|"Write"| GOLD_TBL
     
+    GOLD_TBL -->|"Validate"| GOLD_DQ
+    GOLD_DQ -->|"Audit"| DQ_AUDIT
+    
     %% Orchestration
     EB -->|"Schedule"| SFN
-    SFN -->|"Trigger"| SILVER_JOB
-    SFN -->|"Trigger"| DQ_JOB
-    SFN -->|"Trigger"| GOLD_JOB
+    SFN -->|"1. Trigger"| BRONZE_DQ
+    SFN -->|"2. Trigger"| SILVER_JOB
+    SFN -->|"3. Trigger"| SILVER_DQ
+    SFN -->|"4. Trigger"| GOLD_JOB
+    SFN -->|"5. Trigger"| GOLD_DQ
     
     %% Monitoring
     BRONZE_JOB -->|"Metrics"| CW
     CW -->|"Alarm"| LAMBDA
     LAMBDA -->|"Restart"| BRONZE_JOB
-    CW -->|"Alerts"| SNS
-    DQ_JOB -->|"Failures"| SNS
+    
+    %% DQ Alerts
+    BRONZE_DQ -->|"Fail ❌"| SNS
+    SILVER_DQ -->|"Fail ❌"| SNS
+    GOLD_DQ -->|"Fail ❌"| SNS
+    SILVER_DQ -->|"Drift ⚠️"| SNS
+    
+    %% Grafana
+    CW -->|"Metrics"| GRAFANA
     
     %% DevOps
     TF -->|"Provision"| VPC
@@ -262,6 +319,7 @@ flowchart TB
     classDef ingestion fill:#fef3e2,stroke:#ff9900,stroke-width:2px
     classDef streaming fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     classDef processing fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef dqgate fill:#ffebee,stroke:#c62828,stroke-width:2px
     classDef storage fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
     classDef monitoring fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     classDef devops fill:#eceff1,stroke:#546e7a,stroke-width:2px
@@ -269,10 +327,50 @@ flowchart TB
     class WIKI external
     class ECS ingestion
     class MSK streaming
-    class BRONZE_JOB,SILVER_JOB,DQ_JOB,GOLD_JOB processing
-    class BRONZE_TBL,SILVER_TBL,GOLD_TBL,S3 storage
-    class SFN,CW,SNS,LAMBDA,EB monitoring
+    class BRONZE_JOB,SILVER_JOB,GOLD_JOB processing
+    class BRONZE_DQ,SILVER_DQ,GOLD_DQ dqgate
+    class BRONZE_TBL,SILVER_TBL,GOLD_TBL,DQ_AUDIT,S3 storage
+    class SFN,CW,SNS,LAMBDA,EB,GRAFANA monitoring
     class TF,ECR devops
+            </div>
+        </div>
+
+        <!-- DQ Gates Section -->
+        <div class="dq-section">
+            <h3>🔍 Data Quality Gates (Deequ-based)</h3>
+            <div class="dq-grid">
+                <div class="dq-item">
+                    <strong>🥉 Bronze DQ Gate</strong>
+                    <div class="dq-checks">
+                        ✓ Completeness: event_id, event_type, domain, timestamp (100%)<br/>
+                        ✓ Timeliness: 95% events within 1 minute<br/>
+                        ✓ Validity: event_type in allowed set<br/>
+                        ✓ Uniqueness: event_id within batch<br/>
+                        <b>Blocks Silver if fails</b>
+                    </div>
+                </div>
+                <div class="dq-item">
+                    <strong>🥈 Silver DQ Gate</strong>
+                    <div class="dq-checks">
+                        ✓ Accuracy: length_delta calculation (99%)<br/>
+                        ✓ Accuracy: is_anonymous derivation (99%)<br/>
+                        ✓ Accuracy: region mapping (100%)<br/>
+                        ✓ Consistency: is_valid flag<br/>
+                        ✓ Drift: 7-day baseline comparison<br/>
+                        <b>Blocks Gold if fails</b>
+                    </div>
+                </div>
+                <div class="dq-item">
+                    <strong>🥇 Gold DQ Gate</strong>
+                    <div class="dq-checks">
+                        ✓ Upstream: Bronze & Silver gates passed<br/>
+                        ✓ Consistency: total_events >= unique_users<br/>
+                        ✓ Validity: bot_percentage in 0-100<br/>
+                        ✓ Validity: risk_score in 0-100<br/>
+                        ✓ Completeness: required aggregation fields<br/>
+                        <b>Alerts on failure</b>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -313,6 +411,13 @@ flowchart TB
                     </div>
                 </div>
                 <div class="legend-item">
+                    <span class="icon">🔍</span>
+                    <div>
+                        <strong>Bronze DQ Gate</strong> <span class="status status-dq">DQ GATE</span><br/>
+                        Completeness, timeliness, validity, uniqueness checks
+                    </div>
+                </div>
+                <div class="legend-item">
                     <span class="icon">🥈</span>
                     <div>
                         <strong>Silver Batch Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
@@ -322,15 +427,22 @@ flowchart TB
                 <div class="legend-item">
                     <span class="icon">🔍</span>
                     <div>
-                        <strong>Data Quality Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        AWS Deequ validation: completeness, uniqueness, validity checks
+                        <strong>Silver DQ Gate</strong> <span class="status status-dq">DQ GATE</span><br/>
+                        Accuracy, consistency, uniqueness, drift detection
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">🥇</span>
                     <div>
                         <strong>Gold Batch Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Aggregations: hourly_edit_stats, entity_trends, risk_scores
+                        Aggregations: hourly_stats, entity_trends, risk_scores
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">🔍</span>
+                    <div>
+                        <strong>Gold DQ Gate</strong> <span class="status status-dq">DQ GATE</span><br/>
+                        Upstream verification, validation, consistency checks
                     </div>
                 </div>
             </div>
@@ -342,6 +454,13 @@ flowchart TB
                     <div>
                         <strong>S3 Tables (Apache Iceberg)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
                         Managed Iceberg tables with ACID transactions, time travel, schema evolution
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">📋</span>
+                    <div>
+                        <strong>dq_audit Namespace</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Quality results and profile metrics for audit trail
                     </div>
                 </div>
                 <div class="legend-item">
@@ -359,7 +478,7 @@ flowchart TB
                     <span class="icon">⚙️</span>
                     <div>
                         <strong>Step Functions</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Unified batch pipeline: Silver → DQ → Gold (sequential execution)
+                        Unified batch pipeline: Bronze DQ → Silver → Silver DQ → Gold → Gold DQ
                     </div>
                 </div>
                 <div class="legend-item">
@@ -377,10 +496,24 @@ flowchart TB
                     </div>
                 </div>
                 <div class="legend-item">
+                    <span class="icon">📧</span>
+                    <div>
+                        <strong>SNS Alerts</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        DQ gate failures, drift detection, pipeline errors → email
+                    </div>
+                </div>
+                <div class="legend-item">
                     <span class="icon">📊</span>
                     <div>
                         <strong>CloudWatch Dashboard</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Pipeline health, metrics, alarms, log aggregation
+                        Pipeline health, DQ metrics, alarms, log aggregation
+                    </div>
+                </div>
+                <div class="legend-item">
+                    <span class="icon">📊</span>
+                    <div>
+                        <strong>Grafana (Local)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Dockerized operational dashboard with CloudWatch integration
                     </div>
                 </div>
             </div>
@@ -404,7 +537,7 @@ flowchart TB
                 </div>
                 <div class="tech-item">
                     <strong>Data Quality</strong>
-                    <span>AWS Deequ 2.0.7</span>
+                    <span>AWS Deequ 2.0.7 (Spark-native)</span>
                 </div>
                 <div class="tech-item">
                     <strong>Languages</strong>
@@ -420,38 +553,56 @@ flowchart TB
                 </div>
                 <div class="tech-item">
                     <strong>Monitoring</strong>
-                    <span>CloudWatch, SNS, X-Ray</span>
+                    <span>CloudWatch, Grafana, SNS</span>
                 </div>
             </div>
         </div>
 
         <!-- Data Flow Summary -->
         <div class="legend-section" style="margin-top: 30px;">
-            <h3>🔄 Data Flow Summary</h3>
+            <h3>🔄 Data Flow Summary with DQ Gates</h3>
             <div style="font-family: monospace; background: #1a1a2e; padding: 20px; border-radius: 8px; overflow-x: auto;">
                 <pre style="color: #8ecae6; margin: 0;">
-┌──────────────────┐     ┌──────────────┐     ┌─────────────────────────────────────────────────────────────┐
-│   Wikipedia      │     │   Amazon     │     │                  EMR Serverless (Spark)                     │
-│  EventStreams    │────▶│     MSK      │────▶│  ┌─────────┐   ┌─────────┐   ┌────────┐   ┌─────────┐     │
-│   (SSE Feed)     │     │  (Kafka)     │     │  │ Bronze  │──▶│ Silver  │──▶│   DQ   │──▶│  Gold   │     │
-└──────────────────┘     └──────────────┘     │  │Streaming│   │  Batch  │   │ Check  │   │  Batch  │     │
-        │                       │             │  └────┬────┘   └────┬────┘   └────┬───┘   └────┬────┘     │
-        │                       │             └───────│─────────────│─────────────│────────────│──────────┘
-        ▼                       ▼                     │             │             │            │
-┌──────────────────┐     ┌──────────────┐            │             │             │            │
-│   ECS Fargate    │     │   raw-events │            ▼             ▼             ▼            ▼
-│  Kafka Producer  │────▶│  dlq-events  │     ┌─────────────────────────────────────────────────────────────┐
-│  (Python/SSE)    │     │   (Topics)   │     │                   S3 Tables (Apache Iceberg)                │
-└──────────────────┘     └──────────────┘     │  bronze.wiki_events │ silver.wiki_events │ gold.* tables   │
-                                              └─────────────────────────────────────────────────────────────┘
+┌──────────────────┐     ┌──────────────┐     ┌─────────────────────────────────────────────────────────────────────┐
+│   Wikipedia      │     │   Amazon     │     │                  EMR Serverless (Spark)                             │
+│  EventStreams    │────▶│     MSK      │────▶│                                                                     │
+│   (SSE Feed)     │     │  (Kafka)     │     │  ┌─────────┐   ┌──────────┐   ┌─────────┐   ┌──────────┐           │
+└──────────────────┘     └──────────────┘     │  │ Bronze  │   │ Bronze   │   │ Silver  │   │ Silver   │           │
+        │                       │             │  │Streaming│──▶│ DQ Gate  │──▶│  Batch  │──▶│ DQ Gate  │           │
+        │                       │             │  └────┬────┘   │ (Deequ)  │   └────┬────┘   │ (Deequ)  │           │
+        ▼                       ▼             │       │        └────┬─────┘        │        └────┬─────┘           │
+┌──────────────────┐     ┌──────────────┐     │       │             │ ✅Pass       │             │ ✅Pass           │
+│   ECS Fargate    │     │   raw-events │     │       │             │              │             │                  │
+│  Kafka Producer  │────▶│  dlq-events  │     │       │        ❌Fail─────▶SNS     │        ❌Fail──────▶SNS        │
+│  (Python/SSE)    │     │   (Topics)   │     │       │                            │                               │
+└──────────────────┘     └──────────────┘     │       │        ┌───────────────────┘                               │
+                                              │       │        │                                                    │
+                                              │       │        │   ┌─────────┐   ┌──────────┐                      │
+                                              │       │        └──▶│  Gold   │──▶│  Gold    │                      │
+                                              │       │            │  Batch  │   │ DQ Gate  │                      │
+                                              │       │            └────┬────┘   │ (Deequ)  │                      │
+                                              │       │                 │        └────┬─────┘                      │
+                                              │       │                 │             │ ✅Pass/❌Fail──▶SNS         │
+                                              │       │                 │             │                            │
+                                              └───────│─────────────────│─────────────│────────────────────────────┘
+                                                      │                 │             │
+                                                      ▼                 ▼             ▼
+                                           ┌─────────────────────────────────────────────────────────────────────────┐
+                                           │                   S3 Tables (Apache Iceberg)                            │
+                                           │  ┌───────────┬───────────┬───────────┬──────────────┐                   │
+                                           │  │  bronze   │  silver   │   gold    │   dq_audit   │                   │
+                                           │  │  .raw_    │ .cleaned_ │ .hourly_  │  .quality_   │                   │
+                                           │  │  events   │  events   │  stats    │   results    │                   │
+                                           │  └───────────┴───────────┴───────────┴──────────────┘                   │
+                                           └─────────────────────────────────────────────────────────────────────────┘
                 </pre>
             </div>
         </div>
 
         <!-- Footer -->
         <div style="text-align: center; margin-top: 40px; padding: 20px; border-top: 1px solid rgba(255,153,0,0.3);">
-            <p style="color: #888;">WikiStream Pipeline v1.0 • Built with AWS Serverless Technologies</p>
-            <p style="color: #666; font-size: 0.85rem;">All components implemented and operational ✓</p>
+            <p style="color: #888;">WikiStream Pipeline v2.0 • Built with AWS Serverless Technologies</p>
+            <p style="color: #666; font-size: 0.85rem;">All components including Data Quality Gates implemented and operational ✓</p>
         </div>
     </div>
 
@@ -468,4 +619,3 @@ flowchart TB
     </script>
 </body>
 </html>
-
