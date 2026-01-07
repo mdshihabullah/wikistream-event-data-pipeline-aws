@@ -9,13 +9,15 @@
 # - ECS Cluster and Service
 # - S3 Data Bucket
 # - S3 Tables Bucket with optimized maintenance (compaction, snapshots, cleanup)
-# - S3 Tables Namespaces (bronze, silver, gold)
-# - Step Functions, EventBridge, Lambda, CloudWatch
-# - SNS, IAM Roles
+# - S3 Tables Namespaces (bronze, silver, gold, dq_audit)
+# - Step Functions with DQ Gates (Bronze DQ → Silver → Silver DQ → Gold → Gold DQ)
+# - EventBridge, Lambda, CloudWatch
+# - SNS with email subscription for alerts
+# - IAM Roles
 #
 # After Terraform, it also:
 # - Builds and pushes Docker image (if needed)
-# - Uploads Spark jobs to S3
+# - Uploads Spark jobs to S3 (including DQ module)
 # - Starts ECS producer service
 # - Starts Bronze streaming job
 # =============================================================================
@@ -36,8 +38,9 @@ echo "  • EMR Serverless Application"
 echo "  • ECS Cluster and Producer Service"
 echo "  • S3 Data Bucket"
 echo "  • S3 Tables Bucket (with optimized maintenance)"
-echo "  • S3 Tables Namespaces (bronze, silver, gold)"
-echo "  • Step Functions, EventBridge, Lambda"
+echo "  • S3 Tables Namespaces (bronze, silver, gold, dq_audit)"
+echo "  • Step Functions with DQ Gates"
+echo "  • EventBridge, Lambda, SNS (email alerts)"
 echo "  • CloudWatch Dashboard and Alarms"
 echo ""
 
@@ -137,9 +140,18 @@ echo "📦 Step 4/6: Uploading Spark jobs to S3..."
 
 cd "${PROJECT_ROOT}"
 
-# Upload jobs
+# Upload main job files (excluding dq directory)
 aws s3 cp spark/jobs/ s3://${DATA_BUCKET}/spark/jobs/ --recursive --quiet \
-    --exclude "__pycache__/*" --exclude "*.pyc"
+    --exclude "__pycache__/*" --exclude "*.pyc" --exclude "dq/*"
+
+# Create and upload DQ module as zip (for --py-files)
+echo "   Creating DQ module package..."
+cd spark/jobs
+rm -f dq.zip
+zip -rq dq.zip dq/ -x "dq/__pycache__/*" -x "*.pyc"
+aws s3 cp dq.zip s3://${DATA_BUCKET}/spark/jobs/dq.zip --quiet
+rm -f dq.zip
+cd "${PROJECT_ROOT}"
 
 # Upload schemas
 aws s3 cp spark/schemas/ s3://${DATA_BUCKET}/spark/schemas/ --recursive --quiet \
@@ -150,8 +162,8 @@ aws s3 cp config/ s3://${DATA_BUCKET}/config/ --recursive --quiet \
     --exclude "__pycache__/*" --exclude "*.pyc"
 
 # Verify upload
-JOB_COUNT=$(aws s3 ls s3://${DATA_BUCKET}/spark/jobs/ | wc -l | tr -d ' ')
-echo "   ✅ Uploaded ${JOB_COUNT} Spark job files"
+JOB_COUNT=$(aws s3 ls s3://${DATA_BUCKET}/spark/jobs/ --recursive | wc -l | tr -d ' ')
+echo "   ✅ Uploaded ${JOB_COUNT} Spark job files (including DQ module)"
 
 # =============================================================================
 # Step 5: Start ECS Producer Service
@@ -226,7 +238,8 @@ echo "   • S3 Tables Bucket (with auto-maintenance):"
 echo "     - Compaction: 512MB target files"
 echo "     - Snapshot Management: 7 days retention"
 echo "     - Orphan Cleanup: 3 days"
-echo "   • S3 Tables Namespaces: bronze, silver, gold"
+echo "   • S3 Tables Namespaces: bronze, silver, gold, dq_audit"
+echo "   • DQ Gates: Bronze → Silver → Gold (blocks on failure)"
 echo ""
 echo "🔄 Running Jobs:"
 echo "   • ECS Producer: Starting..."
@@ -242,7 +255,11 @@ echo "   • Producer will connect to MSK in ~1-2 minutes"
 echo "   • Bronze job will process first batch in ~2-3 minutes"
 echo "   • Data will appear in S3 Tables shortly after"
 echo ""
-echo "📝 Optional: Enable batch pipeline schedule (Silver → DQ → Gold):"
+echo "📝 Optional: Enable batch pipeline with DQ gates:"
 echo "   aws events enable-rule --name wikistream-dev-batch-pipeline-schedule"
+echo ""
+echo "📊 Local Monitoring (Grafana):"
+echo "   cd monitoring/docker && docker-compose up -d"
+echo "   Open http://localhost:3000 (admin/wikistream)"
 echo ""
 echo "🛑 End of day: ./scripts/destroy_infra.sh"

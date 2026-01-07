@@ -94,14 +94,35 @@ flowchart LR
     GOLD --> ICE
 ```
 
-### Processing Flow
+### Processing Flow with DQ Gates
 
 | Layer | Job Type | Trigger | Description |
 |-------|----------|---------|-------------|
 | **Bronze** | Streaming | 30s micro-batches | Kafka → Iceberg with exactly-once semantics |
+| **Bronze DQ Gate** | Batch | Before Silver | Completeness, timeliness (95% ≤1min), validity checks |
 | **Silver** | Batch | Every 5 min (Step Functions) | Deduplication, normalization, enrichment |
-| **Data Quality** | Batch | Every 5 min (Step Functions) | Deequ validation: completeness, validity |
-| **Gold** | Batch | Every 5 min (Step Functions) | Aggregations: hourly stats, entity trends, risk scores |
+| **Silver DQ Gate** | Batch | After Silver | Accuracy, consistency, uniqueness, drift detection |
+| **Gold** | Batch | After Silver DQ passes | Aggregations: hourly stats, entity trends, risk scores |
+| **Gold DQ Gate** | Batch | After Gold | Upstream validation + aggregation consistency |
+
+### Data Quality Gates
+
+DQ gates block downstream processing when checks fail:
+
+```
+Bronze → [Bronze DQ Gate] → Silver → [Silver DQ Gate] → Gold → [Gold DQ Gate]
+               ↓                            ↓                       ↓
+           ❌ FAIL                      ❌ FAIL                  ❌ FAIL
+         (blocks Silver)             (blocks Gold)            (alert only)
+```
+
+| Gate | Check Types | Failure Action |
+|------|-------------|----------------|
+| **Bronze DQ** | Completeness, Timeliness, Validity | Blocks Silver processing |
+| **Silver DQ** | Accuracy, Consistency, Uniqueness, Drift | Blocks Gold processing |
+| **Gold DQ** | Upstream verification, Aggregation checks | Alert but data available |
+
+All DQ results are persisted to `dq_audit.quality_results` for audit and trend analysis.
 
 ### Key Features
 
@@ -109,7 +130,9 @@ flowchart LR
 - **≤5 minute** end-to-end SLA for dashboard freshness
 - **Exactly-once semantics** via Spark checkpointing and idempotent MERGE
 - **Auto-recovery** Lambda restarts Bronze job on health check failure
-- **Data quality gates** with Deequ before Gold layer updates
+- **Data quality gates** that block downstream processing on failures
+- **DQ audit trail** with full evidence in Iceberg tables
+- **SNS alerts** for DQ gate failures to mrshihabullah@gmail.com
 
 ---
 
@@ -371,6 +394,38 @@ aws stepfunctions list-executions \
 
 ---
 
+## Monitoring & Analytics
+
+WikiStream provides two types of analytics:
+
+### Operational Monitoring (Grafana)
+
+Local dockerized Grafana connected to CloudWatch for pipeline health:
+
+```bash
+# Start Grafana
+cd monitoring/docker
+docker-compose up -d
+
+# Access at http://localhost:3000 (admin/wikistream)
+```
+
+**Dashboard includes:**
+- DQ Gate status (Bronze/Silver/Gold pass/fail)
+- Processing latency and throughput
+- Pipeline failures and trends
+- Infrastructure metrics (MSK, ECS, EMR)
+
+### Business Analytics (QuickSight)
+
+AWS QuickSight dashboards for stakeholder insights:
+- Edit activity trends
+- Regional and language analysis
+- Risk score monitoring
+- Contributor patterns
+
+---
+
 ## Project Structure
 
 ```
@@ -392,7 +447,13 @@ wikistream/
 │   │   ├── bronze_streaming_job.py    # Kafka → Bronze (Spark Structured Streaming)
 │   │   ├── silver_batch_job.py        # Bronze → Silver (Spark Batch)
 │   │   ├── gold_batch_job.py          # Silver → Gold (Spark Batch)
-│   │   └── data_quality_job.py        # Deequ quality checks
+│   │   ├── bronze_dq_gate.py          # Bronze layer DQ gate job
+│   │   ├── silver_dq_gate.py          # Silver layer DQ gate job
+│   │   ├── gold_dq_gate.py            # Gold layer DQ gate job
+│   │   └── dq/                        # DQ module
+│   │       ├── __init__.py
+│   │       ├── dq_checks.py           # Deequ-based DQ check classes
+│   │       └── dq_utils.py            # Audit writer, metrics, alerting
 │   └── schemas/
 │       ├── bronze_schema.py           # Raw event schema
 │       ├── silver_schema.py           # Cleaned event schema
@@ -405,7 +466,10 @@ wikistream/
 │   ├── destroy_infra.sh               # Stop costly resources (preserves data)
 │   └── deploy.sh                      # Full deployment script
 ├── monitoring/
-│   ├── grafana/dashboards/            # Grafana dashboard exports
+│   ├── docker/                        # Dockerized Grafana setup
+│   │   ├── docker-compose.yml
+│   │   └── grafana/provisioning/      # Auto-provisioned datasources
+│   ├── grafana/dashboards/            # Pipeline health dashboard
 │   └── cloudwatch/alarms.json         # CloudWatch alarm definitions
 └── quicksight/
     ├── datasets/                      # QuickSight dataset configs
@@ -423,12 +487,16 @@ wikistream/
 | **Bronze Streaming Job** | ✅ Implemented | 30s micro-batches, MERGE INTO |
 | **Silver Batch Job** | ✅ Implemented | Deduplication, normalization |
 | **Gold Batch Job** | ✅ Implemented | Aggregations, risk scores |
-| **Data Quality (Deequ)** | ✅ Implemented | Completeness, validity checks |
-| **Step Functions Pipeline** | ✅ Implemented | Unified: Silver → DQ → Gold |
+| **Bronze DQ Gate** | ✅ Implemented | Completeness, timeliness (95% ≤1min), validity |
+| **Silver DQ Gate** | ✅ Implemented | Accuracy, consistency, uniqueness, drift detection |
+| **Gold DQ Gate** | ✅ Implemented | Upstream validation, aggregation consistency |
+| **DQ Audit Tables** | ✅ Implemented | `dq_audit.quality_results`, `dq_audit.profile_metrics` |
+| **Step Functions Pipeline** | ✅ Implemented | With DQ gates: Bronze DQ → Silver → Silver DQ → Gold → Gold DQ |
 | **Auto-Restart Lambda** | ✅ Implemented | CloudWatch alarm trigger |
-| **CloudWatch Dashboard** | ✅ Implemented | Pipeline health metrics |
-| **SNS Alerts** | ✅ Implemented | Failure notifications |
-| **S3 Tables (Iceberg)** | ✅ Implemented | bronze, silver, gold namespaces |
+| **CloudWatch Dashboard** | ✅ Implemented | Pipeline health + DQ gate metrics |
+| **Grafana (Docker)** | ✅ Implemented | Local operational monitoring |
+| **SNS Alerts** | ✅ Implemented | Failure notifications to mrshihabullah@gmail.com |
+| **S3 Tables (Iceberg)** | ✅ Implemented | bronze, silver, gold, dq_audit namespaces |
 | **Cost Optimization Scripts** | ✅ Implemented | destroy/create for dev workflow |
 
 ---
