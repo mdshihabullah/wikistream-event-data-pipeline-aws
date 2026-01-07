@@ -286,6 +286,11 @@ resource "aws_s3tables_namespace" "gold" {
   table_bucket_arn = aws_s3tables_table_bucket.wikistream.arn
 }
 
+resource "aws_s3tables_namespace" "dq_audit" {
+  namespace        = "dq_audit"
+  table_bucket_arn = aws_s3tables_table_bucket.wikistream.arn
+}
+
 # =============================================================================
 # MSK CLUSTER (KRaft Mode - Kafka 3.9.0)
 # =============================================================================
@@ -794,6 +799,13 @@ resource "aws_sns_topic" "alerts" {
   name = "${local.name_prefix}-alerts"
 }
 
+# SNS Email Subscription for Pipeline Alerts
+resource "aws_sns_topic_subscription" "alert_email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
 # =============================================================================
 # STEP FUNCTIONS (Alternative to MWAA - Cost-Effective Orchestration)
 # =============================================================================
@@ -901,10 +913,12 @@ resource "aws_iam_role_policy" "step_functions" {
 }
 
 # =============================================================================
-# UNIFIED BATCH PIPELINE STATE MACHINE (Silver → Data Quality → Gold)
+# UNIFIED BATCH PIPELINE STATE MACHINE WITH DQ GATES
 # =============================================================================
-# This state machine runs all batch jobs SEQUENTIALLY to stay within vCPU quota
-# Total execution time target: ≤4 minutes to meet ≤5 minute SLA
+# This state machine runs all batch jobs SEQUENTIALLY with DQ gates between layers.
+# Flow: Bronze DQ Gate → Silver Job → Silver DQ Gate → Gold Job → Gold DQ Gate
+# DQ gates block downstream processing if data quality checks fail.
+# Total execution time target: ≤5 minutes to meet SLA
 # =============================================================================
 
 resource "aws_sfn_state_machine" "batch_pipeline" {
@@ -913,7 +927,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
 
   definition = <<-EOF
 {
-  "Comment": "Unified batch pipeline: Silver → Data Quality → Gold (Sequential to optimize vCPU usage)",
+  "Comment": "Unified batch pipeline with DQ gates: Bronze DQ → Silver → Silver DQ → Gold → Gold DQ",
   "StartAt": "RecordPipelineStart",
   "States": {
     "RecordPipelineStart": {
@@ -926,6 +940,57 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
           "Value": 1,
           "Unit": "Count",
           "Dimensions": [{"Name": "Pipeline", "Value": "batch"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "BronzeDQGate"
+    },
+    "BronzeDQGate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${aws_emrserverless_application.spark.id}",
+        "ExecutionRoleArn": "${aws_iam_role.emr_serverless.arn}",
+        "Name": "bronze-dq-gate",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/bronze_dq_gate.py",
+            "EntryPointArguments": ["${aws_sns_topic.alerts.arn}", "2"],
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1 --py-files s3://${aws_s3_bucket.data.id}/spark/jobs/dq.zip"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
+              "LogStreamNamePrefix": "bronze-dq-gate"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/bronze-dq-gate/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.bronzeDQResult",
+      "TimeoutSeconds": 180,
+      "Next": "RecordBronzeDQSuccess",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyBronzeDQFailure"
+      }]
+    },
+    "RecordBronzeDQSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "DQGatePassed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "bronze"}]
         }]
       },
       "ResultPath": null,
@@ -980,20 +1045,20 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }]
       },
       "ResultPath": null,
-      "Next": "StartDataQualityJob"
+      "Next": "SilverDQGate"
     },
-    "StartDataQualityJob": {
+    "SilverDQGate": {
       "Type": "Task",
       "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
       "Parameters": {
         "ApplicationId": "${aws_emrserverless_application.spark.id}",
         "ExecutionRoleArn": "${aws_iam_role.emr_serverless.arn}",
-        "Name": "data-quality-check",
+        "Name": "silver-dq-gate",
         "JobDriver": {
           "SparkSubmit": {
-            "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/data_quality_job.py",
-            "EntryPointArguments": ["${aws_sns_topic.alerts.arn}"],
-            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0,com.amazon.deequ:deequ:2.0.7-spark-3.5 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+            "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/silver_dq_gate.py",
+            "EntryPointArguments": ["${aws_sns_topic.alerts.arn}", "2"],
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1 --py-files s3://${aws_s3_bucket.data.id}/spark/jobs/dq.zip"
           }
         },
         "ConfigurationOverrides": {
@@ -1001,33 +1066,33 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
             "CloudWatchLoggingConfiguration": {
               "Enabled": true,
               "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
-              "LogStreamNamePrefix": "data-quality"
+              "LogStreamNamePrefix": "silver-dq-gate"
             },
             "S3MonitoringConfiguration": {
-              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/data-quality/"
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/silver-dq-gate/"
             }
           }
         }
       },
-      "ResultPath": "$.dqResult",
-      "TimeoutSeconds": 300,
-      "Next": "RecordDQSuccess",
+      "ResultPath": "$.silverDQResult",
+      "TimeoutSeconds": 180,
+      "Next": "RecordSilverDQSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
         "ResultPath": "$.error",
-        "Next": "NotifyDQFailure"
+        "Next": "NotifySilverDQFailure"
       }]
     },
-    "RecordDQSuccess": {
+    "RecordSilverDQSuccess": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
       "Parameters": {
         "Namespace": "WikiStream/DataQuality",
         "MetricData": [{
-          "MetricName": "QualityCheckCompleted",
+          "MetricName": "DQGatePassed",
           "Value": 1,
           "Unit": "Count",
-          "Dimensions": [{"Name": "Layer", "Value": "all"}]
+          "Dimensions": [{"Name": "Layer", "Value": "silver"}]
         }]
       },
       "ResultPath": null,
@@ -1074,23 +1139,99 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
       "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
       "Parameters": {
         "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "GoldProcessingCompleted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "GoldDQGate"
+    },
+    "GoldDQGate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${aws_emrserverless_application.spark.id}",
+        "ExecutionRoleArn": "${aws_iam_role.emr_serverless.arn}",
+        "Name": "gold-dq-gate",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${aws_s3_bucket.data.id}/spark/jobs/gold_dq_gate.py",
+            "EntryPointArguments": ["${aws_sns_topic.alerts.arn}", "2"],
+            "SparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${aws_s3tables_table_bucket.wikistream.arn} --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1 --py-files s3://${aws_s3_bucket.data.id}/spark/jobs/dq.zip"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${local.name_prefix}",
+              "LogStreamNamePrefix": "gold-dq-gate"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${aws_s3_bucket.data.id}/emr-serverless/logs/gold-dq-gate/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.goldDQResult",
+      "TimeoutSeconds": 180,
+      "Next": "RecordPipelineComplete",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyGoldDQFailure"
+      }]
+    },
+    "RecordPipelineComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
         "MetricData": [
-          {
-            "MetricName": "GoldProcessingCompleted",
-            "Value": 1,
-            "Unit": "Count",
-            "Dimensions": [{"Name": "Layer", "Value": "gold"}]
-          },
           {
             "MetricName": "BatchPipelineCompleted",
             "Value": 1,
             "Unit": "Count",
             "Dimensions": [{"Name": "Pipeline", "Value": "batch"}]
+          },
+          {
+            "MetricName": "DQGatePassed",
+            "Value": 1,
+            "Unit": "Count",
+            "Dimensions": [{"Name": "Layer", "Value": "gold"}]
           }
         ]
       },
       "ResultPath": null,
       "Next": "Success"
+    },
+    "NotifyBronzeDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${aws_sns_topic.alerts.arn}",
+        "Subject": "🚨 WikiStream Bronze DQ Gate FAILED",
+        "Message.$": "States.Format('DQ_GATE_FAILURE | Layer: bronze | Severity: CRITICAL | ExecutionId: {} | Timestamp: {} | Error: {} | Action: Downstream processing blocked', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordBronzeDQFailure"
+    },
+    "RecordBronzeDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "DQGateFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "bronze"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
     },
     "NotifySilverFailure": {
       "Type": "Task",
@@ -1117,26 +1258,26 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
       "ResultPath": null,
       "Next": "Fail"
     },
-    "NotifyDQFailure": {
+    "NotifySilverDQFailure": {
       "Type": "Task",
       "Resource": "arn:aws:states:::sns:publish",
       "Parameters": {
         "TopicArn": "${aws_sns_topic.alerts.arn}",
-        "Subject": "WikiStream Data Quality Check Failure",
-        "Message.$": "States.Format('DATA_QUALITY_FAILURE | Severity: CRITICAL | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+        "Subject": "🚨 WikiStream Silver DQ Gate FAILED",
+        "Message.$": "States.Format('DQ_GATE_FAILURE | Layer: silver | Severity: CRITICAL | ExecutionId: {} | Timestamp: {} | Error: {} | Action: Gold processing blocked', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
       },
-      "Next": "RecordDQFailure"
+      "Next": "RecordSilverDQFailure"
     },
-    "RecordDQFailure": {
+    "RecordSilverDQFailure": {
       "Type": "Task",
       "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
       "Parameters": {
         "Namespace": "WikiStream/DataQuality",
         "MetricData": [{
-          "MetricName": "QualityCheckFailed",
+          "MetricName": "DQGateFailed",
           "Value": 1,
           "Unit": "Count",
-          "Dimensions": [{"Name": "Layer", "Value": "all"}]
+          "Dimensions": [{"Name": "Layer", "Value": "silver"}]
         }]
       },
       "ResultPath": null,
@@ -1167,10 +1308,35 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
       "ResultPath": null,
       "Next": "Fail"
     },
+    "NotifyGoldDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${aws_sns_topic.alerts.arn}",
+        "Subject": "⚠️ WikiStream Gold DQ Gate FAILED",
+        "Message.$": "States.Format('DQ_GATE_FAILURE | Layer: gold | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {} | Note: Data processed but quality checks failed', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordGoldDQFailure"
+    },
+    "RecordGoldDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "DQGateFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
     "Fail": {
       "Type": "Fail",
       "Error": "BatchPipelineFailed",
-      "Cause": "Batch pipeline processing failed"
+      "Cause": "Batch pipeline or DQ gate failed"
     },
     "Success": {
       "Type": "Succeed"

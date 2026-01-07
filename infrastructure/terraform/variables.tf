@@ -30,3 +30,13 @@ variable "vpc_cidr" {
   type        = string
   default     = "10.0.0.0/16"
 }
+
+# =============================================================================
+# Alerting Configuration
+# =============================================================================
+
+variable "alert_email" {
+  description = "Email address to receive pipeline alerts and DQ notifications"
+  type        = string
+  default     = "mrshihabullah@gmail.com"
+}
