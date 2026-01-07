@@ -184,8 +184,8 @@
         <!-- Key Metrics -->
         <div class="metrics">
             <div class="metric-box">
-                <div class="value">≤30s</div>
-                <div class="label">Bronze Ingestion</div>
+                <div class="value">3 min</div>
+                <div class="label">Bronze Micro-batch</div>
             </div>
             <div class="metric-box">
                 <div class="value">95%</div>
@@ -225,24 +225,24 @@ flowchart TB
 
         subgraph PROCESSING["⚡ DATA PROCESSING (EMR Serverless)"]
             subgraph STREAM_LAYER["🔴 STREAMING LAYER"]
-                BRONZE_JOB["🥉 Bronze Streaming Job<br/><b>Spark Structured Streaming</b><br/><i>30s micro-batches</i><br/>Kafka → Iceberg"]
+                BRONZE_JOB["🥉 Bronze Streaming Job<br/><b>Spark Structured Streaming</b><br/><i>3-min micro-batches</i><br/>Kafka → Iceberg"]
             end
             
             subgraph BATCH_LAYER["🔵 BATCH LAYER (Step Functions)"]
-                BRONZE_DQ["🔍 Bronze DQ Gate<br/><b>Deequ Checks</b><br/><i>Completeness, Timeliness</i>"]
+                BRONZE_DQ["🔍 Bronze DQ Gate<br/><b>PySpark Checks</b><br/><i>Completeness, Timeliness</i>"]
                 SILVER_JOB["🥈 Silver Batch Job<br/><b>Data Cleansing</b><br/><i>Deduplication, Normalization</i>"]
-                SILVER_DQ["🔍 Silver DQ Gate<br/><b>Deequ Checks</b><br/><i>Accuracy, Drift Detection</i>"]
-                GOLD_JOB["🥇 Gold Batch Job<br/><b>Aggregations</b><br/><i>Hourly Stats, Entity Trends</i>"]
-                GOLD_DQ["🔍 Gold DQ Gate<br/><b>Deequ Checks</b><br/><i>Validation, Consistency</i>"]
+                SILVER_DQ["🔍 Silver DQ Gate<br/><b>PySpark Checks</b><br/><i>Accuracy, Drift Detection</i>"]
+                GOLD_JOB["🥇 Gold Batch Job<br/><b>Aggregations</b><br/><i>Hourly Stats, Risk Scores</i>"]
+                GOLD_DQ["🔍 Gold DQ Gate<br/><b>PySpark Checks</b><br/><i>Validation, Consistency</i>"]
             end
         end
     end
 
     subgraph STORAGE["💾 DATA LAKE STORAGE"]
-        subgraph S3TABLES["📊 S3 Tables (Apache Iceberg)"]
+        subgraph S3TABLES["📊 S3 Tables (Apache Iceberg 1.10.0)"]
             BRONZE_TBL["🥉 bronze.raw_events<br/><i>Raw ingested events</i><br/>Partitioned by date/hour"]
-            SILVER_TBL["🥈 silver.cleaned_events<br/><i>Deduplicated & normalized</i>"]
-            GOLD_TBL["🥇 gold.*<br/><i>hourly_stats</i><br/><i>entity_trends</i><br/><i>risk_scores</i>"]
+            SILVER_TBL["🥈 silver.cleaned_events<br/><i>Deduplicated & normalized</i><br/>Partitioned by date/region"]
+            GOLD_TBL["🥇 gold.*<br/><i>hourly_stats</i><br/><i>risk_scores</i>"]
             DQ_AUDIT["📋 dq_audit.*<br/><i>quality_results</i><br/><i>profile_metrics</i>"]
         end
         
@@ -337,38 +337,40 @@ flowchart TB
 
         <!-- DQ Gates Section -->
         <div class="dq-section">
-            <h3>🔍 Data Quality Gates (Deequ-based)</h3>
+            <h3>🔍 Data Quality Gates (AWS Deequ / PyDeequ 1.4.0)</h3>
             <div class="dq-grid">
                 <div class="dq-item">
                     <strong>🥉 Bronze DQ Gate</strong>
                     <div class="dq-checks">
                         ✓ Completeness: event_id, event_type, domain, timestamp (100%)<br/>
-                        ✓ Timeliness: 95% events within 1 minute<br/>
-                        ✓ Validity: event_type in allowed set<br/>
-                        ✓ Uniqueness: event_id within batch<br/>
-                        <b>Blocks Silver if fails</b>
+                        ✓ Completeness: title, user, wiki (≥95% warning)<br/>
+                        ✓ Timeliness: 95th percentile latency ≤60s<br/>
+                        ✓ Validity: event_type in allowed set, namespace ≥0<br/>
+                        ✓ Uniqueness: event_id unique within batch<br/>
+                        <b style="color:#e74c3c;">Blocks Silver if fails</b>
                     </div>
                 </div>
                 <div class="dq-item">
                     <strong>🥈 Silver DQ Gate</strong>
                     <div class="dq-checks">
-                        ✓ Accuracy: length_delta calculation (99%)<br/>
-                        ✓ Accuracy: is_anonymous derivation (99%)<br/>
-                        ✓ Accuracy: region mapping (100%)<br/>
-                        ✓ Consistency: is_valid flag<br/>
-                        ✓ Drift: 7-day baseline comparison<br/>
-                        <b>Blocks Gold if fails</b>
+                        ✓ Accuracy: length_delta = length_new - length_old (99%)<br/>
+                        ✓ Accuracy: is_anonymous from IP pattern (99%)<br/>
+                        ✓ Accuracy: region mapping from domain (100%)<br/>
+                        ✓ Consistency: is_valid flag = true<br/>
+                        ✓ Uniqueness: event_id unique<br/>
+                        ✓ Drift: null rate change &gt;20% alerts<br/>
+                        <b style="color:#e74c3c;">Blocks Gold if fails</b>
                     </div>
                 </div>
                 <div class="dq-item">
                     <strong>🥇 Gold DQ Gate</strong>
                     <div class="dq-checks">
-                        ✓ Upstream: Bronze & Silver gates passed<br/>
-                        ✓ Consistency: total_events >= unique_users<br/>
+                        ✓ Upstream: Bronze & Silver gates must pass<br/>
+                        ✓ Completeness: total_events, unique_users non-null<br/>
+                        ✓ Consistency: total_events ≥ unique_users<br/>
                         ✓ Validity: bot_percentage in 0-100<br/>
                         ✓ Validity: risk_score in 0-100<br/>
-                        ✓ Completeness: required aggregation fields<br/>
-                        <b>Alerts on failure</b>
+                        <b style="color:#f39c12;">Alerts on failure (non-blocking)</b>
                     </div>
                 </div>
             </div>
@@ -382,21 +384,21 @@ flowchart TB
                     <span class="icon">🌐</span>
                     <div>
                         <strong>Wikipedia EventStreams</strong> <span class="status status-live">LIVE</span><br/>
-                        Real-time SSE feed of all Wikipedia edits across multiple wikis
+                        Real-time SSE feed of all Wikipedia edits (~1500-3000 events/min)
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">🐳</span>
                     <div>
                         <strong>ECS Fargate Producer</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Python service consuming SSE, producing to Kafka with IAM auth
+                        Python service (0.25 vCPU, 512MB) consuming SSE, producing to Kafka with IAM auth
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">📡</span>
                     <div>
                         <strong>Amazon MSK (KRaft)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Kafka 3.9.x cluster, topics: raw-events (main), dlq-events (dead letter)
+                        Kafka 3.9.x cluster, 2x kafka.t3.small, topics: raw-events, dlq-events
                     </div>
                 </div>
             </div>
@@ -407,35 +409,35 @@ flowchart TB
                     <span class="icon">🥉</span>
                     <div>
                         <strong>Bronze Streaming Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Spark Structured Streaming, 30s micro-batches, MERGE INTO Iceberg
+                        Spark Structured Streaming, <b>3-min micro-batches</b>, 10-min watermark, MERGE INTO Iceberg
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">🔍</span>
                     <div>
                         <strong>Bronze DQ Gate</strong> <span class="status status-dq">DQ GATE</span><br/>
-                        Completeness, timeliness, validity, uniqueness checks
+                        Completeness, timeliness (95% &lt;1min), validity, uniqueness checks
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">🥈</span>
                     <div>
                         <strong>Silver Batch Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Deduplication, normalization, data type standardization
+                        Deduplication, region/language mapping, quality flags (is_valid, is_large_deletion)
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">🔍</span>
                     <div>
                         <strong>Silver DQ Gate</strong> <span class="status status-dq">DQ GATE</span><br/>
-                        Accuracy, consistency, uniqueness, drift detection
+                        Accuracy, consistency, uniqueness, data drift detection (7-day baseline)
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">🥇</span>
                     <div>
                         <strong>Gold Batch Job</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Aggregations: hourly_stats, entity_trends, risk_scores
+                        Aggregations: hourly_stats (domain metrics), risk_scores (user-level 0-100)
                     </div>
                 </div>
                 <div class="legend-item">
@@ -452,22 +454,22 @@ flowchart TB
                 <div class="legend-item">
                     <span class="icon">📊</span>
                     <div>
-                        <strong>S3 Tables (Apache Iceberg)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Managed Iceberg tables with ACID transactions, time travel, schema evolution
+                        <strong>S3 Tables (Apache Iceberg 1.10.0)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Managed Iceberg tables with ACID, time travel (48h), schema evolution, ZSTD compression
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">📋</span>
                     <div>
                         <strong>dq_audit Namespace</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Quality results and profile metrics for audit trail
+                        quality_results (check results), profile_metrics (column stats for drift)
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">📦</span>
                     <div>
                         <strong>S3 Bucket</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Spark checkpoints, EMR logs, job artifacts (.py files)
+                        Spark checkpoints, EMR logs, job artifacts (dq.zip, *.py)
                     </div>
                 </div>
             </div>
@@ -485,14 +487,14 @@ flowchart TB
                     <span class="icon">⏰</span>
                     <div>
                         <strong>EventBridge</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Scheduled triggers for batch pipeline (every 5 minutes)
+                        Scheduled triggers for batch pipeline (every 5 minutes, disabled by default)
                     </div>
                 </div>
                 <div class="legend-item">
                     <span class="icon">λ</span>
                     <div>
                         <strong>Lambda Auto-Restart</strong> <span class="status status-auto">AUTO-RECOVERY</span><br/>
-                        Automatically restarts Bronze job on health check failure
+                        Automatically restarts Bronze job on CloudWatch alarm trigger
                     </div>
                 </div>
                 <div class="legend-item">
@@ -512,8 +514,8 @@ flowchart TB
                 <div class="legend-item">
                     <span class="icon">📊</span>
                     <div>
-                        <strong>Grafana (Local)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
-                        Dockerized operational dashboard with CloudWatch integration
+                        <strong>Grafana (Local Docker)</strong> <span class="status status-implemented">IMPLEMENTED</span><br/>
+                        Operational dashboard with CloudWatch integration
                     </div>
                 </div>
             </div>
@@ -525,11 +527,11 @@ flowchart TB
             <div class="tech-grid">
                 <div class="tech-item">
                     <strong>Compute</strong>
-                    <span>EMR Serverless (Spark 3.5), ECS Fargate, Lambda</span>
+                    <span>EMR Serverless (Spark 3.5, emr-7.12.0), ECS Fargate, Lambda</span>
                 </div>
                 <div class="tech-item">
                     <strong>Streaming</strong>
-                    <span>Amazon MSK (Kafka 3.9.x, KRaft mode)</span>
+                    <span>Amazon MSK (Kafka 3.9.x, KRaft mode, IAM auth)</span>
                 </div>
                 <div class="tech-item">
                     <strong>Table Format</strong>
@@ -537,7 +539,7 @@ flowchart TB
                 </div>
                 <div class="tech-item">
                     <strong>Data Quality</strong>
-                    <span>AWS Deequ 2.0.7 (Spark-native)</span>
+                    <span>AWS Deequ 2.0.7 + PyDeequ 1.4.0</span>
                 </div>
                 <div class="tech-item">
                     <strong>Languages</strong>
@@ -564,14 +566,14 @@ flowchart TB
             <div style="font-family: monospace; background: #1a1a2e; padding: 20px; border-radius: 8px; overflow-x: auto;">
                 <pre style="color: #8ecae6; margin: 0;">
 ┌──────────────────┐     ┌──────────────┐     ┌─────────────────────────────────────────────────────────────────────┐
-│   Wikipedia      │     │   Amazon     │     │                  EMR Serverless (Spark)                             │
+│   Wikipedia      │     │   Amazon     │     │                  EMR Serverless (Spark 3.5)                         │
 │  EventStreams    │────▶│     MSK      │────▶│                                                                     │
 │   (SSE Feed)     │     │  (Kafka)     │     │  ┌─────────┐   ┌──────────┐   ┌─────────┐   ┌──────────┐           │
 └──────────────────┘     └──────────────┘     │  │ Bronze  │   │ Bronze   │   │ Silver  │   │ Silver   │           │
         │                       │             │  │Streaming│──▶│ DQ Gate  │──▶│  Batch  │──▶│ DQ Gate  │           │
-        │                       │             │  └────┬────┘   │ (Deequ)  │   └────┬────┘   │ (Deequ)  │           │
-        ▼                       ▼             │       │        └────┬─────┘        │        └────┬─────┘           │
-┌──────────────────┐     ┌──────────────┐     │       │             │ ✅Pass       │             │ ✅Pass           │
+        │                       │             │  │ 3-min   │   │ (PySpark)│   └────┬────┘   │ (PySpark)│           │
+        ▼                       ▼             │  │ batches │   └────┬─────┘        │        └────┬─────┘           │
+┌──────────────────┐     ┌──────────────┐     │  └────┬────┘        │ ✅Pass       │             │ ✅Pass           │
 │   ECS Fargate    │     │   raw-events │     │       │             │              │             │                  │
 │  Kafka Producer  │────▶│  dlq-events  │     │       │        ❌Fail─────▶SNS     │        ❌Fail──────▶SNS        │
 │  (Python/SSE)    │     │   (Topics)   │     │       │                            │                               │
@@ -580,7 +582,7 @@ flowchart TB
                                               │       │        │   ┌─────────┐   ┌──────────┐                      │
                                               │       │        └──▶│  Gold   │──▶│  Gold    │                      │
                                               │       │            │  Batch  │   │ DQ Gate  │                      │
-                                              │       │            └────┬────┘   │ (Deequ)  │                      │
+                                              │       │            └────┬────┘   │ (PySpark)│                      │
                                               │       │                 │        └────┬─────┘                      │
                                               │       │                 │             │ ✅Pass/❌Fail──▶SNS         │
                                               │       │                 │             │                            │
@@ -588,11 +590,13 @@ flowchart TB
                                                       │                 │             │
                                                       ▼                 ▼             ▼
                                            ┌─────────────────────────────────────────────────────────────────────────┐
-                                           │                   S3 Tables (Apache Iceberg)                            │
+                                           │                   S3 Tables (Apache Iceberg 1.10.0)                     │
                                            │  ┌───────────┬───────────┬───────────┬──────────────┐                   │
                                            │  │  bronze   │  silver   │   gold    │   dq_audit   │                   │
                                            │  │  .raw_    │ .cleaned_ │ .hourly_  │  .quality_   │                   │
                                            │  │  events   │  events   │  stats    │   results    │                   │
+                                           │  │           │           │ .risk_    │  .profile_   │                   │
+                                           │  │           │           │  scores   │   metrics    │                   │
                                            │  └───────────┴───────────┴───────────┴──────────────┘                   │
                                            └─────────────────────────────────────────────────────────────────────────┘
                 </pre>
@@ -601,7 +605,7 @@ flowchart TB
 
         <!-- Footer -->
         <div style="text-align: center; margin-top: 40px; padding: 20px; border-top: 1px solid rgba(255,153,0,0.3);">
-            <p style="color: #888;">WikiStream Pipeline v2.0 • Built with AWS Serverless Technologies</p>
+            <p style="color: #888;">WikiStream Pipeline v2.1 • Built with AWS Serverless Technologies</p>
             <p style="color: #666; font-size: 0.85rem;">All components including Data Quality Gates implemented and operational ✓</p>
         </div>
     </div>

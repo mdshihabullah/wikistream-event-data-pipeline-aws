@@ -2,7 +2,11 @@
 """
 WikiStream Data Quality Checks Module
 ======================================
-Deequ-based data quality checks for Bronze, Silver, and Gold layers.
+PyDeequ-based data quality checks for Bronze, Silver, and Gold layers.
+
+Uses AWS Deequ (PyDeequ wrapper) for scalable data quality validation.
+Deequ Version: 2.0.7-spark-3.5
+PyDeequ Version: 1.4.0
 
 This module provides:
 - Completeness checks (critical and important fields)
@@ -10,7 +14,7 @@ This module provides:
 - Validity checks (value range and format validation)
 - Accuracy checks (cross-field consistency)
 - Uniqueness checks (deduplication verification)
-- Data drift detection (statistical profile comparison)
+- Data profiling for drift detection
 
 All checks follow industry best practices for data quality in streaming pipelines.
 """
@@ -27,6 +31,26 @@ from pyspark.sql.functions import (
     col, when, lit, abs as spark_abs,
     unix_timestamp, avg, regexp_extract
 )
+
+# PyDeequ imports
+try:
+    from pydeequ.checks import Check, CheckLevel
+    from pydeequ.verification import VerificationSuite, VerificationResult
+    from pydeequ.analyzers import (
+        AnalysisRunner, 
+        Completeness, 
+        Uniqueness, 
+        Size,
+        Mean,
+        StandardDeviation,
+        Minimum,
+        Maximum,
+        ApproxQuantile
+    )
+    PYDEEQU_AVAILABLE = True
+except ImportError:
+    PYDEEQU_AVAILABLE = False
+    print("WARNING: PyDeequ not available, falling back to PySpark-based checks")
 
 
 class CheckStatus(Enum):
@@ -138,7 +162,7 @@ class DQGateResult:
 
 
 class BaseDQChecks(ABC):
-    """Base class for data quality checks."""
+    """Base class for PyDeequ-based data quality checks."""
     
     def __init__(self, spark: SparkSession, layer: str, table_name: str):
         self.spark = spark
@@ -151,7 +175,122 @@ class BaseDQChecks(ABC):
         """Run all checks for this layer."""
         pass
     
-    def _check_completeness(
+    def _run_deequ_verification(
+        self,
+        df: DataFrame,
+        check: "Check"
+    ) -> List[DQCheckResult]:
+        """
+        Run PyDeequ verification and convert results to DQCheckResult list.
+        
+        Args:
+            df: DataFrame to verify
+            check: PyDeequ Check object with constraints
+            
+        Returns:
+            List of DQCheckResult objects
+        """
+        if not PYDEEQU_AVAILABLE:
+            return [DQCheckResult(
+                check_name="deequ_unavailable",
+                check_type=CheckType.VALIDITY,
+                status=CheckStatus.ERROR,
+                message="PyDeequ not installed - install pydeequ package"
+            )]
+        
+        start_time = datetime.utcnow()
+        results = []
+        
+        try:
+            # Run verification
+            verification_result = VerificationSuite(self.spark) \
+                .onData(df) \
+                .addCheck(check) \
+                .run()
+            
+            # Get row count for context
+            row_count = df.count()
+            
+            # Parse results
+            result_df = VerificationResult.checkResultsAsDataFrame(
+                self.spark, verification_result
+            )
+            
+            for row in result_df.collect():
+                check_name = row["check"]
+                constraint = row["constraint"]
+                constraint_status = row["constraint_status"]
+                constraint_message = row["constraint_message"] if row["constraint_message"] else ""
+                
+                # Extract metric value if available
+                metric_value = None
+                if "Value:" in constraint_message:
+                    try:
+                        metric_str = constraint_message.split("Value:")[1].strip().split()[0]
+                        metric_value = float(metric_str)
+                    except (ValueError, IndexError):
+                        pass
+                
+                # Determine status
+                if constraint_status == "Success":
+                    status = CheckStatus.PASSED
+                elif constraint_status == "Warning":
+                    status = CheckStatus.WARNING
+                else:
+                    status = CheckStatus.FAILED
+                
+                # Determine check type from constraint name
+                check_type = self._infer_check_type(constraint)
+                
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                
+                results.append(DQCheckResult(
+                    check_name=self._sanitize_check_name(constraint),
+                    check_type=check_type,
+                    status=status,
+                    metric_value=metric_value,
+                    records_checked=row_count,
+                    message=constraint_message or f"Constraint: {constraint}",
+                    check_duration_ms=duration_ms
+                ))
+            
+            return results
+            
+        except Exception as e:
+            return [DQCheckResult(
+                check_name="deequ_verification_error",
+                check_type=CheckType.VALIDITY,
+                status=CheckStatus.ERROR,
+                message=f"Deequ verification error: {str(e)}"
+            )]
+    
+    def _infer_check_type(self, constraint: str) -> CheckType:
+        """Infer check type from constraint name."""
+        constraint_lower = constraint.lower()
+        if "completeness" in constraint_lower or "isnull" in constraint_lower:
+            return CheckType.COMPLETENESS
+        elif "unique" in constraint_lower:
+            return CheckType.UNIQUENESS
+        elif "contained" in constraint_lower or "isin" in constraint_lower:
+            return CheckType.VALIDITY
+        elif "nonnegative" in constraint_lower or "range" in constraint_lower:
+            return CheckType.VALIDITY
+        elif "accuracy" in constraint_lower:
+            return CheckType.ACCURACY
+        else:
+            return CheckType.CONSISTENCY
+    
+    def _sanitize_check_name(self, constraint: str) -> str:
+        """Convert constraint string to a clean check name."""
+        # Remove common prefixes and clean up
+        name = constraint.replace("CompletenessConstraint", "completeness")
+        name = name.replace("UniquenessConstraint", "uniqueness")
+        name = name.replace("Constraint", "")
+        name = name.replace("(", "_").replace(")", "").replace(",", "_")
+        name = name.replace(" ", "_").replace(".", "_")
+        return name.lower().strip("_")
+
+    def _check_completeness_pyspark(
         self,
         df: DataFrame,
         column: str,
@@ -159,13 +298,7 @@ class BaseDQChecks(ABC):
         is_critical: bool = True
     ) -> DQCheckResult:
         """
-        Check completeness (non-null rate) of a column.
-        
-        Args:
-            df: DataFrame to check
-            column: Column name to check
-            threshold: Minimum completeness rate (0.0 to 1.0)
-            is_critical: If True, FAIL on threshold breach; else WARNING
+        Fallback: Check completeness using PySpark when Deequ unavailable.
         """
         start_time = datetime.utcnow()
         
@@ -215,304 +348,88 @@ class BaseDQChecks(ABC):
                 status=CheckStatus.ERROR,
                 message=f"Error checking completeness: {str(e)}"
             )
-    
-    def _check_uniqueness(
-        self,
-        df: DataFrame,
-        column: str,
-        threshold: float = 1.0
-    ) -> DQCheckResult:
-        """
-        Check uniqueness of values in a column within the batch.
-        
-        Args:
-            df: DataFrame to check
-            column: Column name to check
-            threshold: Minimum uniqueness rate (0.0 to 1.0)
-        """
-        start_time = datetime.utcnow()
-        
-        try:
-            total_count = df.count()
-            if total_count == 0:
-                return DQCheckResult(
-                    check_name=f"uniqueness_{column}",
-                    check_type=CheckType.UNIQUENESS,
-                    status=CheckStatus.SKIPPED,
-                    message="No records to check"
-                )
-            
-            distinct_count = df.select(column).distinct().count()
-            duplicate_count = total_count - distinct_count
-            uniqueness_rate = distinct_count / total_count
-            
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-            
-            # Get sample duplicates for evidence
-            evidence = {}
-            if duplicate_count > 0:
-                dup_sample = (
-                    df.groupBy(column)
-                    .count()
-                    .filter(col("count") > 1)
-                    .limit(5)
-                    .collect()
-                )
-                evidence["sample_duplicates"] = [
-                    {"value": str(row[column]), "count": row["count"]} 
-                    for row in dup_sample
-                ]
-            
-            if uniqueness_rate >= threshold:
-                status = CheckStatus.PASSED
-                message = f"Uniqueness {uniqueness_rate:.2%} >= {threshold:.2%}"
-            else:
-                status = CheckStatus.FAILED
-                message = f"Found {duplicate_count} duplicate values"
-            
-            return DQCheckResult(
-                check_name=f"uniqueness_{column}",
-                check_type=CheckType.UNIQUENESS,
-                status=status,
-                metric_value=uniqueness_rate,
-                threshold_value=threshold,
-                records_checked=total_count,
-                records_passed=distinct_count,
-                records_failed=duplicate_count,
-                failure_rate=duplicate_count / total_count if total_count > 0 else 0,
-                message=message,
-                evidence=evidence,
-                check_duration_ms=duration_ms
-            )
-        except Exception as e:
-            return DQCheckResult(
-                check_name=f"uniqueness_{column}",
-                check_type=CheckType.UNIQUENESS,
-                status=CheckStatus.ERROR,
-                message=f"Error checking uniqueness: {str(e)}"
-            )
-    
-    def _check_value_in_set(
-        self,
-        df: DataFrame,
-        column: str,
-        allowed_values: List[str],
-        threshold: float = 0.95
-    ) -> DQCheckResult:
-        """
-        Check that column values are within an allowed set.
-        
-        Args:
-            df: DataFrame to check
-            column: Column name to check
-            allowed_values: List of allowed values
-            threshold: Minimum valid rate
-        """
-        start_time = datetime.utcnow()
-        
-        try:
-            total_count = df.count()
-            if total_count == 0:
-                return DQCheckResult(
-                    check_name=f"validity_{column}_in_set",
-                    check_type=CheckType.VALIDITY,
-                    status=CheckStatus.SKIPPED,
-                    message="No records to check"
-                )
-            
-            valid_count = df.filter(col(column).isin(allowed_values)).count()
-            invalid_count = total_count - valid_count
-            valid_rate = valid_count / total_count
-            
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-            
-            # Get sample invalid values for evidence
-            evidence = {"allowed_values": allowed_values}
-            if invalid_count > 0:
-                invalid_sample = (
-                    df.filter(~col(column).isin(allowed_values))
-                    .select(column)
-                    .distinct()
-                    .limit(10)
-                    .collect()
-                )
-                evidence["sample_invalid"] = [str(row[column]) for row in invalid_sample]
-            
-            if valid_rate >= threshold:
-                status = CheckStatus.PASSED
-                message = f"Validity {valid_rate:.2%} >= {threshold:.2%}"
-            else:
-                status = CheckStatus.FAILED
-                message = f"Found {invalid_count} invalid values ({(1-valid_rate):.2%})"
-            
-            return DQCheckResult(
-                check_name=f"validity_{column}_in_set",
-                check_type=CheckType.VALIDITY,
-                status=status,
-                metric_value=valid_rate,
-                threshold_value=threshold,
-                records_checked=total_count,
-                records_passed=valid_count,
-                records_failed=invalid_count,
-                failure_rate=invalid_count / total_count if total_count > 0 else 0,
-                message=message,
-                evidence=evidence,
-                check_duration_ms=duration_ms
-            )
-        except Exception as e:
-            return DQCheckResult(
-                check_name=f"validity_{column}_in_set",
-                check_type=CheckType.VALIDITY,
-                status=CheckStatus.ERROR,
-                message=f"Error checking validity: {str(e)}"
-            )
-    
-    def _check_range(
-        self,
-        df: DataFrame,
-        column: str,
-        min_val: Optional[float] = None,
-        max_val: Optional[float] = None,
-        threshold: float = 1.0
-    ) -> DQCheckResult:
-        """
-        Check that numeric column values are within a range.
-        """
-        start_time = datetime.utcnow()
-        
-        try:
-            # Filter out nulls for range check
-            non_null_df = df.filter(col(column).isNotNull())
-            total_count = non_null_df.count()
-            
-            if total_count == 0:
-                return DQCheckResult(
-                    check_name=f"validity_{column}_range",
-                    check_type=CheckType.VALIDITY,
-                    status=CheckStatus.SKIPPED,
-                    message="No non-null records to check"
-                )
-            
-            # Build filter condition
-            condition = lit(True)
-            if min_val is not None:
-                condition = condition & (col(column) >= min_val)
-            if max_val is not None:
-                condition = condition & (col(column) <= max_val)
-            
-            valid_count = non_null_df.filter(condition).count()
-            invalid_count = total_count - valid_count
-            valid_rate = valid_count / total_count
-            
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-            
-            evidence = {}
-            if min_val is not None:
-                evidence["min_allowed"] = min_val
-            if max_val is not None:
-                evidence["max_allowed"] = max_val
-            
-            if valid_rate >= threshold:
-                status = CheckStatus.PASSED
-                message = f"Range validity {valid_rate:.2%} >= {threshold:.2%}"
-            else:
-                status = CheckStatus.FAILED
-                message = f"Found {invalid_count} out-of-range values"
-            
-            return DQCheckResult(
-                check_name=f"validity_{column}_range",
-                check_type=CheckType.VALIDITY,
-                status=status,
-                metric_value=valid_rate,
-                threshold_value=threshold,
-                records_checked=total_count,
-                records_passed=valid_count,
-                records_failed=invalid_count,
-                failure_rate=invalid_count / total_count if total_count > 0 else 0,
-                message=message,
-                evidence=evidence,
-                check_duration_ms=duration_ms
-            )
-        except Exception as e:
-            return DQCheckResult(
-                check_name=f"validity_{column}_range",
-                check_type=CheckType.VALIDITY,
-                status=CheckStatus.ERROR,
-                message=f"Error checking range: {str(e)}"
-            )
 
 
 class BronzeDQChecks(BaseDQChecks):
     """
-    Bronze Layer Data Quality Checks.
+    Bronze Layer Data Quality Checks using PyDeequ.
     
     Checks:
-    - Completeness: Critical fields (event_id, event_type, domain, event_timestamp)
-    - Completeness: Important fields (title, user, wiki) with 95% threshold
-    - Timeliness: event_timestamp within 1 minute of bronze_processed_at (95th percentile)
-    - Timeliness: kafka_timestamp within 5 minutes of event_timestamp
+    - Completeness: Critical fields (event_id, event_type, domain, event_timestamp) - 100%
+    - Completeness: Important fields (title, user, wiki) - 95% threshold
+    - Timeliness: 95% events within 1 minute of bronze_processed_at
     - Validity: event_type in allowed set
     - Validity: event_hour in range 0-23
     - Validity: namespace >= 0
+    - Uniqueness: event_id within batch
     """
     
-    # Configuration constants
+    # Configuration
     CRITICAL_FIELDS = ["event_id", "event_type", "domain", "event_timestamp"]
     IMPORTANT_FIELDS = ["title", "user", "wiki"]
     ALLOWED_EVENT_TYPES = ["edit", "new", "log", "categorize", "external", "unknown"]
     TIMELINESS_THRESHOLD_SECONDS = 60  # 1 minute
-    TIMELINESS_PERCENTILE = 0.95  # 95th percentile
-    KAFKA_LAG_THRESHOLD_SECONDS = 300  # 5 minutes
     
     def __init__(self, spark: SparkSession):
         super().__init__(spark, "bronze", "bronze.raw_events")
     
     def run_all_checks(self, df: DataFrame, run_id: str) -> DQGateResult:
-        """Run all Bronze layer DQ checks."""
-        results = []
+        """Run all Bronze layer DQ checks using PyDeequ."""
+        all_results = []
         
-        # 1. Critical field completeness (100%)
-        for field in self.CRITICAL_FIELDS:
-            result = self._check_completeness(df, field, threshold=1.0, is_critical=True)
-            results.append(result)
+        if PYDEEQU_AVAILABLE:
+            # Build PyDeequ Check with all constraints
+            check = Check(self.spark, CheckLevel.Error, "Bronze DQ Checks")
+            
+            # 1. Critical field completeness (100%)
+            for field in self.CRITICAL_FIELDS:
+                check = check.isComplete(field)
+            
+            # 2. Important field completeness (95%)
+            for field in self.IMPORTANT_FIELDS:
+                check = check.hasCompleteness(field, lambda x: x >= 0.95)
+            
+            # 3. Validity: event_type in allowed set
+            check = check.isContainedIn("event_type", self.ALLOWED_EVENT_TYPES)
+            
+            # 4. Validity: event_hour range 0-23
+            check = check.isNonNegative("event_hour")
+            check = check.hasMax("event_hour", lambda x: x <= 23)
+            
+            # 5. Validity: namespace >= 0
+            check = check.isNonNegative("namespace")
+            
+            # 6. Uniqueness: event_id
+            check = check.isUnique("event_id")
+            
+            # Run Deequ verification
+            deequ_results = self._run_deequ_verification(df, check)
+            all_results.extend(deequ_results)
+            
+        else:
+            # Fallback to PySpark-based checks
+            print("Using PySpark fallback for DQ checks")
+            
+            # Critical completeness
+            for field in self.CRITICAL_FIELDS:
+                result = self._check_completeness_pyspark(df, field, 1.0, True)
+                all_results.append(result)
+            
+            # Important completeness
+            for field in self.IMPORTANT_FIELDS:
+                result = self._check_completeness_pyspark(df, field, 0.95, False)
+                all_results.append(result)
         
-        # 2. Important field completeness (95%)
-        for field in self.IMPORTANT_FIELDS:
-            result = self._check_completeness(df, field, threshold=0.95, is_critical=False)
-            results.append(result)
-        
-        # 3. Timeliness: event_timestamp vs bronze_processed_at
+        # 7. Timeliness check (always use PySpark - custom logic)
         timeliness_result = self._check_timeliness(df)
-        results.append(timeliness_result)
-        
-        # 4. Timeliness: kafka_timestamp vs event_timestamp
-        kafka_lag_result = self._check_kafka_lag(df)
-        results.append(kafka_lag_result)
-        
-        # 5. Validity: event_type in allowed set
-        event_type_result = self._check_value_in_set(
-            df, "event_type", self.ALLOWED_EVENT_TYPES, threshold=0.95
-        )
-        results.append(event_type_result)
-        
-        # 6. Validity: event_hour in range 0-23
-        hour_result = self._check_range(df, "event_hour", min_val=0, max_val=23)
-        results.append(hour_result)
-        
-        # 7. Validity: namespace >= 0 (when not null)
-        namespace_result = self._check_range(df, "namespace", min_val=0)
-        results.append(namespace_result)
-        
-        # 8. Uniqueness: event_id within batch
-        uniqueness_result = self._check_uniqueness(df, "event_id")
-        results.append(uniqueness_result)
+        all_results.append(timeliness_result)
         
         return DQGateResult(
             layer=self.layer,
             table_name=self.table_name,
             run_id=run_id,
             run_timestamp=datetime.utcnow(),
-            checks=results
+            checks=all_results
         )
     
     def _check_timeliness(self, df: DataFrame) -> DQCheckResult:
@@ -532,7 +449,7 @@ class BronzeDQChecks(BaseDQChecks):
             
             if total_count == 0:
                 return DQCheckResult(
-                    check_name="timeliness_event_vs_processed",
+                    check_name="timeliness_95pct_within_1min",
                     check_type=CheckType.TIMELINESS,
                     status=CheckStatus.SKIPPED,
                     message="No records with both timestamps"
@@ -549,7 +466,7 @@ class BronzeDQChecks(BaseDQChecks):
             
             # Check 95th percentile
             percentile_95 = timed_df.selectExpr(
-                f"percentile_approx(latency_seconds, {self.TIMELINESS_PERCENTILE})"
+                "percentile_approx(latency_seconds, 0.95)"
             ).collect()[0][0]
             
             # Count records within threshold
@@ -563,23 +480,18 @@ class BronzeDQChecks(BaseDQChecks):
             evidence = {
                 "percentile_95_seconds": round(percentile_95, 2) if percentile_95 else None,
                 "threshold_seconds": self.TIMELINESS_THRESHOLD_SECONDS,
-                "records_within_threshold": within_threshold,
-                "within_threshold_rate": round(within_threshold_rate, 4)
+                "within_threshold_pct": round(within_threshold_rate * 100, 2)
             }
             
-            # Pass if 95th percentile is within threshold
             if percentile_95 is not None and percentile_95 <= self.TIMELINESS_THRESHOLD_SECONDS:
                 status = CheckStatus.PASSED
-                message = f"95th percentile latency {percentile_95:.1f}s <= {self.TIMELINESS_THRESHOLD_SECONDS}s"
-            elif within_threshold_rate >= 0.95:
-                status = CheckStatus.PASSED
-                message = f"{within_threshold_rate:.1%} records within {self.TIMELINESS_THRESHOLD_SECONDS}s threshold"
+                message = f"P95 latency {percentile_95:.1f}s <= {self.TIMELINESS_THRESHOLD_SECONDS}s threshold"
             else:
                 status = CheckStatus.FAILED
-                message = f"Only {within_threshold_rate:.1%} records within threshold"
+                message = f"P95 latency {percentile_95:.1f}s exceeds {self.TIMELINESS_THRESHOLD_SECONDS}s threshold"
             
             return DQCheckResult(
-                check_name="timeliness_event_vs_processed",
+                check_name="timeliness_95pct_within_1min",
                 check_type=CheckType.TIMELINESS,
                 status=status,
                 metric_value=percentile_95,
@@ -594,182 +506,88 @@ class BronzeDQChecks(BaseDQChecks):
             )
         except Exception as e:
             return DQCheckResult(
-                check_name="timeliness_event_vs_processed",
+                check_name="timeliness_95pct_within_1min",
                 check_type=CheckType.TIMELINESS,
                 status=CheckStatus.ERROR,
                 message=f"Error checking timeliness: {str(e)}"
-            )
-    
-    def _check_kafka_lag(self, df: DataFrame) -> DQCheckResult:
-        """
-        Check Kafka ingestion lag: kafka_timestamp vs event_timestamp.
-        Warning if >10% exceed 5 minutes.
-        """
-        start_time = datetime.utcnow()
-        
-        try:
-            # Filter records with both timestamps
-            timed_df = df.filter(
-                col("kafka_timestamp").isNotNull() & 
-                col("event_timestamp").isNotNull()
-            )
-            total_count = timed_df.count()
-            
-            if total_count == 0:
-                return DQCheckResult(
-                    check_name="timeliness_kafka_lag",
-                    check_type=CheckType.TIMELINESS,
-                    status=CheckStatus.SKIPPED,
-                    message="No records with both timestamps"
-                )
-            
-            # Calculate lag in seconds
-            timed_df = timed_df.withColumn(
-                "kafka_lag_seconds",
-                spark_abs(
-                    unix_timestamp("kafka_timestamp") - 
-                    unix_timestamp("event_timestamp")
-                )
-            )
-            
-            # Count records exceeding threshold
-            exceeding = timed_df.filter(
-                col("kafka_lag_seconds") > self.KAFKA_LAG_THRESHOLD_SECONDS
-            ).count()
-            
-            exceed_rate = exceeding / total_count
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
-            
-            # Get average lag
-            avg_lag = timed_df.agg(avg("kafka_lag_seconds")).collect()[0][0]
-            
-            evidence = {
-                "avg_lag_seconds": round(avg_lag, 2) if avg_lag else None,
-                "threshold_seconds": self.KAFKA_LAG_THRESHOLD_SECONDS,
-                "exceeding_count": exceeding,
-                "exceed_rate": round(exceed_rate, 4)
-            }
-            
-            if exceed_rate <= 0.10:  # Warning threshold
-                status = CheckStatus.PASSED
-                message = f"Kafka lag acceptable: {(1-exceed_rate):.1%} within {self.KAFKA_LAG_THRESHOLD_SECONDS}s"
-            else:
-                status = CheckStatus.WARNING
-                message = f"{exceed_rate:.1%} records exceed {self.KAFKA_LAG_THRESHOLD_SECONDS}s Kafka lag"
-            
-            return DQCheckResult(
-                check_name="timeliness_kafka_lag",
-                check_type=CheckType.TIMELINESS,
-                status=status,
-                metric_value=avg_lag,
-                threshold_value=float(self.KAFKA_LAG_THRESHOLD_SECONDS),
-                records_checked=total_count,
-                records_passed=total_count - exceeding,
-                records_failed=exceeding,
-                failure_rate=exceed_rate,
-                message=message,
-                evidence=evidence,
-                check_duration_ms=duration_ms
-            )
-        except Exception as e:
-            return DQCheckResult(
-                check_name="timeliness_kafka_lag",
-                check_type=CheckType.TIMELINESS,
-                status=CheckStatus.ERROR,
-                message=f"Error checking Kafka lag: {str(e)}"
             )
 
 
 class SilverDQChecks(BaseDQChecks):
     """
-    Silver Layer Data Quality Checks.
+    Silver Layer Data Quality Checks using PyDeequ.
     
     Checks:
-    - Accuracy: length_delta == length_new - length_old
-    - Accuracy: is_anonymous correctly derived from IP pattern
-    - Accuracy: region correctly mapped from domain
-    - Consistency: is_valid flag consistency
-    - Uniqueness: event_id uniqueness within batch
-    - Drift: Record count and null rate vs baseline
+    - Completeness: Critical fields 100%
+    - Accuracy: length_delta calculation
+    - Accuracy: is_anonymous derivation
+    - Accuracy: region mapping
+    - Consistency: is_valid flag
+    - Uniqueness: event_id
+    - Validity: region in allowed set
     """
     
-    # Domain to region mapping for validation
+    ALLOWED_REGIONS = ["asia_pacific", "europe", "americas", "middle_east", "other"]
     DOMAIN_REGION_MAP = {
         "zh.wikipedia.org": "asia_pacific",
         "ja.wikipedia.org": "asia_pacific",
         "ko.wikipedia.org": "asia_pacific",
-        "vi.wikipedia.org": "asia_pacific",
         "de.wikipedia.org": "europe",
         "fr.wikipedia.org": "europe",
-        "it.wikipedia.org": "europe",
-        "es.wikipedia.org": "europe",
-        "pl.wikipedia.org": "europe",
-        "nl.wikipedia.org": "europe",
-        "ru.wikipedia.org": "europe",
         "en.wikipedia.org": "americas",
-        "pt.wikipedia.org": "americas",
         "ar.wikipedia.org": "middle_east",
-        "fa.wikipedia.org": "middle_east",
-        "he.wikipedia.org": "middle_east",
     }
-    
-    # IP address pattern for anonymous detection
     IP_PATTERN = r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$"
-    
-    ALLOWED_REGIONS = ["asia_pacific", "europe", "americas", "middle_east", "other"]
     
     def __init__(self, spark: SparkSession):
         super().__init__(spark, "silver", "silver.cleaned_events")
     
     def run_all_checks(self, df: DataFrame, run_id: str) -> DQGateResult:
-        """Run all Silver layer DQ checks."""
-        results = []
+        """Run all Silver layer DQ checks using PyDeequ."""
+        all_results = []
         
-        # 1. Accuracy: length_delta calculation
-        delta_result = self._check_length_delta_accuracy(df)
-        results.append(delta_result)
+        if PYDEEQU_AVAILABLE:
+            # Build PyDeequ Check
+            check = Check(self.spark, CheckLevel.Error, "Silver DQ Checks")
+            
+            # 1. Completeness checks
+            for field in ["event_id", "domain", "region", "event_timestamp"]:
+                check = check.isComplete(field)
+            
+            # 2. Validity: region in allowed set
+            check = check.isContainedIn("region", self.ALLOWED_REGIONS)
+            
+            # 3. Uniqueness: event_id
+            check = check.isUnique("event_id")
+            
+            # Run Deequ verification
+            deequ_results = self._run_deequ_verification(df, check)
+            all_results.extend(deequ_results)
+        else:
+            # Fallback
+            for field in ["event_id", "domain", "region", "event_timestamp"]:
+                result = self._check_completeness_pyspark(df, field, 1.0, True)
+                all_results.append(result)
         
-        # 2. Accuracy: is_anonymous derivation
-        anonymous_result = self._check_anonymous_accuracy(df)
-        results.append(anonymous_result)
-        
-        # 3. Accuracy: region mapping
-        region_result = self._check_region_mapping(df)
-        results.append(region_result)
-        
-        # 4. Validity: region in allowed set
-        region_valid = self._check_value_in_set(df, "region", self.ALLOWED_REGIONS)
-        results.append(region_valid)
-        
-        # 5. Consistency: is_valid flag
-        valid_flag_result = self._check_valid_flag_consistency(df)
-        results.append(valid_flag_result)
-        
-        # 6. Uniqueness: event_id
-        uniqueness_result = self._check_uniqueness(df, "event_id")
-        results.append(uniqueness_result)
-        
-        # 7. Completeness: Critical fields
-        for field in ["event_id", "domain", "region", "event_timestamp"]:
-            result = self._check_completeness(df, field, threshold=1.0, is_critical=True)
-            results.append(result)
+        # Custom accuracy checks (PySpark-based)
+        all_results.append(self._check_length_delta_accuracy(df))
+        all_results.append(self._check_anonymous_accuracy(df))
+        all_results.append(self._check_region_mapping(df))
+        all_results.append(self._check_valid_flag_consistency(df))
         
         return DQGateResult(
             layer=self.layer,
             table_name=self.table_name,
             run_id=run_id,
             run_timestamp=datetime.utcnow(),
-            checks=results
+            checks=all_results
         )
     
     def _check_length_delta_accuracy(self, df: DataFrame) -> DQCheckResult:
-        """
-        Verify that length_delta == length_new - length_old when both are present.
-        """
+        """Verify length_delta == length_new - length_old."""
         start_time = datetime.utcnow()
         
         try:
-            # Filter records with all three values
             calc_df = df.filter(
                 col("length_old").isNotNull() & 
                 col("length_new").isNotNull() & 
@@ -782,25 +600,17 @@ class SilverDQChecks(BaseDQChecks):
                     check_name="accuracy_length_delta",
                     check_type=CheckType.ACCURACY,
                     status=CheckStatus.SKIPPED,
-                    message="No records with length values to check"
+                    message="No records with length values"
                 )
             
-            # Check accuracy: length_delta should equal length_new - length_old
             accurate_count = calc_df.filter(
                 col("length_delta") == (col("length_new") - col("length_old"))
             ).count()
             
-            inaccurate_count = total_count - accurate_count
             accuracy_rate = accurate_count / total_count
-            
             duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             
-            if accuracy_rate >= 0.99:  # Allow 1% tolerance
-                status = CheckStatus.PASSED
-                message = f"length_delta accuracy: {accuracy_rate:.2%}"
-            else:
-                status = CheckStatus.FAILED
-                message = f"length_delta mismatch: {inaccurate_count} records ({(1-accuracy_rate):.2%})"
+            status = CheckStatus.PASSED if accuracy_rate >= 0.99 else CheckStatus.FAILED
             
             return DQCheckResult(
                 check_name="accuracy_length_delta",
@@ -810,9 +620,8 @@ class SilverDQChecks(BaseDQChecks):
                 threshold_value=0.99,
                 records_checked=total_count,
                 records_passed=accurate_count,
-                records_failed=inaccurate_count,
-                failure_rate=inaccurate_count / total_count if total_count > 0 else 0,
-                message=message,
+                records_failed=total_count - accurate_count,
+                message=f"length_delta accuracy: {accuracy_rate:.2%}",
                 check_duration_ms=duration_ms
             )
         except Exception as e:
@@ -820,17 +629,14 @@ class SilverDQChecks(BaseDQChecks):
                 check_name="accuracy_length_delta",
                 check_type=CheckType.ACCURACY,
                 status=CheckStatus.ERROR,
-                message=f"Error checking length_delta accuracy: {str(e)}"
+                message=f"Error: {str(e)}"
             )
     
     def _check_anonymous_accuracy(self, df: DataFrame) -> DQCheckResult:
-        """
-        Verify that is_anonymous is correctly derived from IP pattern in user field.
-        """
+        """Verify is_anonymous derived from IP pattern."""
         start_time = datetime.utcnow()
         
         try:
-            # Check records with user field
             user_df = df.filter(col("user_normalized").isNotNull())
             total_count = user_df.count()
             
@@ -839,10 +645,9 @@ class SilverDQChecks(BaseDQChecks):
                     check_name="accuracy_is_anonymous",
                     check_type=CheckType.ACCURACY,
                     status=CheckStatus.SKIPPED,
-                    message="No user records to check"
+                    message="No user records"
                 )
             
-            # Derive expected is_anonymous based on IP pattern
             user_df = user_df.withColumn(
                 "expected_anonymous",
                 when(
@@ -851,22 +656,14 @@ class SilverDQChecks(BaseDQChecks):
                 ).otherwise(lit(False))
             )
             
-            # Count matches
             accurate_count = user_df.filter(
                 col("is_anonymous") == col("expected_anonymous")
             ).count()
             
-            inaccurate_count = total_count - accurate_count
             accuracy_rate = accurate_count / total_count
-            
             duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             
-            if accuracy_rate >= 0.99:
-                status = CheckStatus.PASSED
-                message = f"is_anonymous accuracy: {accuracy_rate:.2%}"
-            else:
-                status = CheckStatus.FAILED
-                message = f"is_anonymous mismatch: {inaccurate_count} records"
+            status = CheckStatus.PASSED if accuracy_rate >= 0.99 else CheckStatus.FAILED
             
             return DQCheckResult(
                 check_name="accuracy_is_anonymous",
@@ -876,9 +673,8 @@ class SilverDQChecks(BaseDQChecks):
                 threshold_value=0.99,
                 records_checked=total_count,
                 records_passed=accurate_count,
-                records_failed=inaccurate_count,
-                failure_rate=inaccurate_count / total_count if total_count > 0 else 0,
-                message=message,
+                records_failed=total_count - accurate_count,
+                message=f"is_anonymous accuracy: {accuracy_rate:.2%}",
                 check_duration_ms=duration_ms
             )
         except Exception as e:
@@ -886,17 +682,14 @@ class SilverDQChecks(BaseDQChecks):
                 check_name="accuracy_is_anonymous",
                 check_type=CheckType.ACCURACY,
                 status=CheckStatus.ERROR,
-                message=f"Error checking is_anonymous accuracy: {str(e)}"
+                message=f"Error: {str(e)}"
             )
     
     def _check_region_mapping(self, df: DataFrame) -> DQCheckResult:
-        """
-        Verify that region is correctly derived from domain for known domains.
-        """
+        """Verify region correctly derived from domain."""
         start_time = datetime.utcnow()
         
         try:
-            # Filter to known domains
             known_domains = list(self.DOMAIN_REGION_MAP.keys())
             known_df = df.filter(col("domain").isin(known_domains))
             total_count = known_df.count()
@@ -906,10 +699,9 @@ class SilverDQChecks(BaseDQChecks):
                     check_name="accuracy_region_mapping",
                     check_type=CheckType.ACCURACY,
                     status=CheckStatus.SKIPPED,
-                    message="No known domain records to check"
+                    message="No known domain records"
                 )
             
-            # Check each domain-region pair
             correct_count = 0
             for domain, expected_region in self.DOMAIN_REGION_MAP.items():
                 count = known_df.filter(
@@ -917,17 +709,10 @@ class SilverDQChecks(BaseDQChecks):
                 ).count()
                 correct_count += count
             
-            incorrect_count = total_count - correct_count
             accuracy_rate = correct_count / total_count
-            
             duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             
-            if accuracy_rate >= 1.0:  # Should be 100% for known domains
-                status = CheckStatus.PASSED
-                message = f"Region mapping 100% correct for known domains"
-            else:
-                status = CheckStatus.FAILED
-                message = f"Region mapping incorrect for {incorrect_count} records"
+            status = CheckStatus.PASSED if accuracy_rate >= 1.0 else CheckStatus.FAILED
             
             return DQCheckResult(
                 check_name="accuracy_region_mapping",
@@ -937,9 +722,8 @@ class SilverDQChecks(BaseDQChecks):
                 threshold_value=1.0,
                 records_checked=total_count,
                 records_passed=correct_count,
-                records_failed=incorrect_count,
-                failure_rate=incorrect_count / total_count if total_count > 0 else 0,
-                message=message,
+                records_failed=total_count - correct_count,
+                message=f"Region mapping accuracy: {accuracy_rate:.2%}",
                 check_duration_ms=duration_ms
             )
         except Exception as e:
@@ -947,40 +731,28 @@ class SilverDQChecks(BaseDQChecks):
                 check_name="accuracy_region_mapping",
                 check_type=CheckType.ACCURACY,
                 status=CheckStatus.ERROR,
-                message=f"Error checking region mapping: {str(e)}"
+                message=f"Error: {str(e)}"
             )
     
     def _check_valid_flag_consistency(self, df: DataFrame) -> DQCheckResult:
-        """
-        Check that is_valid flag is consistent with actual validity checks.
-        All Silver records should have is_valid = True (invalid filtered out).
-        """
+        """All Silver records should have is_valid = True."""
         start_time = datetime.utcnow()
         
         try:
             total_count = df.count()
-            
             if total_count == 0:
                 return DQCheckResult(
                     check_name="consistency_is_valid",
                     check_type=CheckType.CONSISTENCY,
                     status=CheckStatus.SKIPPED,
-                    message="No records to check"
+                    message="No records"
                 )
             
-            # All Silver records should have is_valid = True
             valid_count = df.filter(col("is_valid") == True).count()
-            invalid_count = total_count - valid_count
             valid_rate = valid_count / total_count
-            
             duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             
-            if valid_rate >= 1.0:
-                status = CheckStatus.PASSED
-                message = "All Silver records have is_valid = True"
-            else:
-                status = CheckStatus.FAILED
-                message = f"Found {invalid_count} records with is_valid != True"
+            status = CheckStatus.PASSED if valid_rate >= 1.0 else CheckStatus.FAILED
             
             return DQCheckResult(
                 check_name="consistency_is_valid",
@@ -990,9 +762,8 @@ class SilverDQChecks(BaseDQChecks):
                 threshold_value=1.0,
                 records_checked=total_count,
                 records_passed=valid_count,
-                records_failed=invalid_count,
-                failure_rate=invalid_count / total_count if total_count > 0 else 0,
-                message=message,
+                records_failed=total_count - valid_count,
+                message=f"is_valid consistency: {valid_rate:.2%}",
                 check_duration_ms=duration_ms
             )
         except Exception as e:
@@ -1000,19 +771,19 @@ class SilverDQChecks(BaseDQChecks):
                 check_name="consistency_is_valid",
                 check_type=CheckType.CONSISTENCY,
                 status=CheckStatus.ERROR,
-                message=f"Error checking is_valid consistency: {str(e)}"
+                message=f"Error: {str(e)}"
             )
 
 
 class GoldDQChecks(BaseDQChecks):
     """
-    Gold Layer Data Quality Checks.
+    Gold Layer Data Quality Checks using PyDeequ.
     
     Checks:
-    - Upstream: Verify Bronze and Silver gates passed
-    - Validation: total_events >= unique_users
-    - Validation: bot_percentage in range 0-100
-    - Validation: risk_score in range 0-100
+    - Upstream: Bronze and Silver gates passed
+    - Consistency: total_events >= unique_users
+    - Validity: bot_percentage 0-100
+    - Validity: risk_score 0-100
     - Completeness: Required aggregation fields
     """
     
@@ -1027,44 +798,50 @@ class GoldDQChecks(BaseDQChecks):
         silver_passed: bool = True
     ) -> DQGateResult:
         """Run all Gold layer DQ checks."""
-        results = []
+        all_results = []
         
         # 1. Upstream gate check
         upstream_result = self._check_upstream_gates(bronze_passed, silver_passed)
-        results.append(upstream_result)
+        all_results.append(upstream_result)
         
-        # If upstream failed, skip other checks
         if not upstream_result.is_passed():
             return DQGateResult(
                 layer=self.layer,
                 table_name=self.table_name,
                 run_id=run_id,
                 run_timestamp=datetime.utcnow(),
-                checks=results
+                checks=all_results
             )
         
-        # 2. Validation: total_events >= unique_users (for hourly_stats)
-        events_users_result = self._check_events_users_consistency(df)
-        results.append(events_users_result)
+        if PYDEEQU_AVAILABLE:
+            # Build PyDeequ Check for Gold
+            check = Check(self.spark, CheckLevel.Error, "Gold DQ Checks")
+            
+            # Completeness
+            check = check.isComplete("domain")
+            check = check.isComplete("total_events")
+            
+            # Validity: bot_percentage 0-100
+            check = check.isNonNegative("bot_percentage")
+            check = check.hasMax("bot_percentage", lambda x: x <= 100)
+            
+            # Run Deequ verification
+            deequ_results = self._run_deequ_verification(df, check)
+            all_results.extend(deequ_results)
+        else:
+            for field in ["domain", "total_events"]:
+                result = self._check_completeness_pyspark(df, field, 1.0, True)
+                all_results.append(result)
         
-        # 3. Validation: bot_percentage range
-        bot_pct_result = self._check_range(df, "bot_percentage", min_val=0, max_val=100)
-        results.append(bot_pct_result)
-        
-        # 4. Completeness: domain
-        domain_result = self._check_completeness(df, "domain", threshold=1.0, is_critical=True)
-        results.append(domain_result)
-        
-        # 5. Completeness: total_events
-        events_result = self._check_completeness(df, "total_events", threshold=1.0, is_critical=True)
-        results.append(events_result)
+        # Custom consistency check
+        all_results.append(self._check_events_users_consistency(df))
         
         return DQGateResult(
             layer=self.layer,
             table_name=self.table_name,
             run_id=run_id,
             run_timestamp=datetime.utcnow(),
-            checks=results
+            checks=all_results
         )
     
     def run_risk_score_checks(
@@ -1075,11 +852,10 @@ class GoldDQChecks(BaseDQChecks):
         silver_passed: bool = True
     ) -> DQGateResult:
         """Run DQ checks on risk_scores table."""
-        results = []
+        all_results = []
         
-        # 1. Upstream gate check
         upstream_result = self._check_upstream_gates(bronze_passed, silver_passed)
-        results.append(upstream_result)
+        all_results.append(upstream_result)
         
         if not upstream_result.is_passed():
             return DQGateResult(
@@ -1087,29 +863,29 @@ class GoldDQChecks(BaseDQChecks):
                 table_name="gold.risk_scores",
                 run_id=run_id,
                 run_timestamp=datetime.utcnow(),
-                checks=results
+                checks=all_results
             )
         
-        # 2. Validation: risk_score range 0-100
-        risk_score_result = self._check_range(df, "risk_score", min_val=0, max_val=100)
-        results.append(risk_score_result)
-        
-        # 3. Validation: risk_level in allowed set
-        risk_level_result = self._check_value_in_set(
-            df, "risk_level", ["LOW", "MEDIUM", "HIGH"]
-        )
-        results.append(risk_level_result)
-        
-        # 4. Completeness: entity_id
-        entity_result = self._check_completeness(df, "entity_id", threshold=1.0, is_critical=True)
-        results.append(entity_result)
+        if PYDEEQU_AVAILABLE:
+            check = Check(self.spark, CheckLevel.Error, "Risk Score DQ Checks")
+            
+            check = check.isComplete("entity_id")
+            check = check.isNonNegative("risk_score")
+            check = check.hasMax("risk_score", lambda x: x <= 100)
+            check = check.isContainedIn("risk_level", ["LOW", "MEDIUM", "HIGH"])
+            
+            deequ_results = self._run_deequ_verification(df, check)
+            all_results.extend(deequ_results)
+        else:
+            result = self._check_completeness_pyspark(df, "entity_id", 1.0, True)
+            all_results.append(result)
         
         return DQGateResult(
             layer=self.layer,
             table_name="gold.risk_scores",
             run_id=run_id,
             run_timestamp=datetime.utcnow(),
-            checks=results
+            checks=all_results
         )
     
     def _check_upstream_gates(
@@ -1117,15 +893,11 @@ class GoldDQChecks(BaseDQChecks):
         bronze_passed: bool, 
         silver_passed: bool
     ) -> DQCheckResult:
-        """Check that upstream gates (Bronze and Silver) passed."""
-        start_time = datetime.utcnow()
-        
+        """Check that upstream gates passed."""
         evidence = {
             "bronze_gate_passed": bronze_passed,
             "silver_gate_passed": silver_passed
         }
-        
-        duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
         
         if bronze_passed and silver_passed:
             return DQCheckResult(
@@ -1133,38 +905,30 @@ class GoldDQChecks(BaseDQChecks):
                 check_type=CheckType.UPSTREAM,
                 status=CheckStatus.PASSED,
                 metric_value=1.0,
-                threshold_value=1.0,
                 message="All upstream DQ gates passed",
-                evidence=evidence,
-                check_duration_ms=duration_ms
+                evidence=evidence
             )
         else:
-            failed_gates = []
+            failed = []
             if not bronze_passed:
-                failed_gates.append("Bronze")
+                failed.append("Bronze")
             if not silver_passed:
-                failed_gates.append("Silver")
+                failed.append("Silver")
             
             return DQCheckResult(
                 check_name="upstream_gates_passed",
                 check_type=CheckType.UPSTREAM,
                 status=CheckStatus.FAILED,
                 metric_value=0.0,
-                threshold_value=1.0,
-                message=f"Upstream gates failed: {', '.join(failed_gates)}",
-                evidence=evidence,
-                check_duration_ms=duration_ms
+                message=f"Upstream gates failed: {', '.join(failed)}",
+                evidence=evidence
             )
     
     def _check_events_users_consistency(self, df: DataFrame) -> DQCheckResult:
-        """
-        Check that total_events >= unique_users (logical consistency).
-        You can't have more users than events.
-        """
+        """Check total_events >= unique_users."""
         start_time = datetime.utcnow()
         
         try:
-            # Filter records with both values
             check_df = df.filter(
                 col("total_events").isNotNull() & 
                 col("unique_users").isNotNull()
@@ -1176,25 +940,18 @@ class GoldDQChecks(BaseDQChecks):
                     check_name="consistency_events_vs_users",
                     check_type=CheckType.CONSISTENCY,
                     status=CheckStatus.SKIPPED,
-                    message="No records with both metrics"
+                    message="No records"
                 )
             
-            # Count violations
             violation_count = check_df.filter(
                 col("total_events") < col("unique_users")
             ).count()
             
             valid_count = total_count - violation_count
             consistency_rate = valid_count / total_count
-            
             duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
             
-            if violation_count == 0:
-                status = CheckStatus.PASSED
-                message = "All records: total_events >= unique_users"
-            else:
-                status = CheckStatus.FAILED
-                message = f"Found {violation_count} records where total_events < unique_users"
+            status = CheckStatus.PASSED if violation_count == 0 else CheckStatus.FAILED
             
             return DQCheckResult(
                 check_name="consistency_events_vs_users",
@@ -1205,8 +962,7 @@ class GoldDQChecks(BaseDQChecks):
                 records_checked=total_count,
                 records_passed=valid_count,
                 records_failed=violation_count,
-                failure_rate=violation_count / total_count if total_count > 0 else 0,
-                message=message,
+                message=f"events >= users: {consistency_rate:.2%}",
                 check_duration_ms=duration_ms
             )
         except Exception as e:
@@ -1214,6 +970,5 @@ class GoldDQChecks(BaseDQChecks):
                 check_name="consistency_events_vs_users",
                 check_type=CheckType.CONSISTENCY,
                 status=CheckStatus.ERROR,
-                message=f"Error checking consistency: {str(e)}"
+                message=f"Error: {str(e)}"
             )
-

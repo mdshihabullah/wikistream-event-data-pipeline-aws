@@ -145,12 +145,30 @@ aws s3 cp spark/jobs/ s3://${DATA_BUCKET}/spark/jobs/ --recursive --quiet \
     --exclude "__pycache__/*" --exclude "*.pyc" --exclude "dq/*"
 
 # Create and upload DQ module as zip (for --py-files)
-echo "   Creating DQ module package..."
+# Includes pydeequ library for AWS Deequ data quality checks
+echo "   Creating DQ module package with PyDeequ..."
 cd spark/jobs
-rm -f dq.zip
-zip -rq dq.zip dq/ -x "dq/__pycache__/*" -x "*.pyc"
+rm -rf dq_package dq.zip
+
+# Create package directory
+mkdir -p dq_package
+
+# Install pydeequ into the package directory
+pip install pydeequ==1.4.0 --target dq_package --quiet --no-deps
+
+# Copy our DQ module
+cp -r dq dq_package/
+
+# Create zip from package directory
+cd dq_package
+zip -rq ../dq.zip . -x "*/__pycache__/*" -x "*.pyc" -x "*.dist-info/*"
+cd ..
+
+# Upload to S3
 aws s3 cp dq.zip s3://${DATA_BUCKET}/spark/jobs/dq.zip --quiet
-rm -f dq.zip
+
+# Cleanup
+rm -rf dq_package dq.zip
 cd "${PROJECT_ROOT}"
 
 # Upload schemas
