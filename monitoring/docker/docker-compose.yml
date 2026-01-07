@@ -1,0 +1,76 @@
+version: '3.8'
+
+# =============================================================================
+# WikiStream Operational Monitoring Stack
+# =============================================================================
+# Local Grafana setup that connects to AWS CloudWatch for pipeline and 
+# operational metrics. Provides real-time visibility into:
+# - Pipeline health (Bronze/Silver/Gold processing)
+# - Data quality gate status
+# - DQ audit results and trends
+# - Infrastructure metrics (MSK, ECS, EMR)
+#
+# Prerequisites:
+# - AWS credentials configured (~/.aws/credentials or environment variables)
+# - CloudWatch metrics being published by the pipeline
+#
+# Usage:
+#   docker-compose up -d
+#   Open http://localhost:3000 (admin/wikistream)
+# =============================================================================
+
+services:
+  grafana:
+    image: grafana/grafana:10.2.3
+    container_name: wikistream-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      # Admin credentials
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=wikistream
+      
+      # AWS credentials from host (for CloudWatch)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      
+      # Grafana configuration
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/pipeline_health.json
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      
+      # Feature toggles
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+    volumes:
+      # Provisioning files (auto-configured datasources and dashboards)
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      # Dashboard JSON files
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # AWS credentials (optional, for SSO/profile-based auth)
+      - ${HOME}/.aws:/root/.aws:ro
+      # Persistent storage
+      - grafana-storage:/var/lib/grafana
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - wikistream-monitoring
+
+volumes:
+  grafana-storage:
+    driver: local
+
+networks:
+  wikistream-monitoring:
+    driver: bridge
+

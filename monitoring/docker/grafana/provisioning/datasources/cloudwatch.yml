@@ -1,0 +1,21 @@
+# =============================================================================
+# Grafana CloudWatch Datasource Configuration
+# =============================================================================
+# Auto-provisions CloudWatch as a datasource for WikiStream metrics.
+# Uses AWS credentials from environment variables or mounted ~/.aws folder.
+# =============================================================================
+
+apiVersion: 1
+
+datasources:
+  - name: CloudWatch
+    type: cloudwatch
+    access: proxy
+    uid: cloudwatch
+    isDefault: true
+    jsonData:
+      authType: default
+      defaultRegion: us-east-1
+      customMetricsNamespaces: "WikiStream/Pipeline,WikiStream/DataQuality"
+    editable: true
+
