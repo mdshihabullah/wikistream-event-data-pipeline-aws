@@ -175,12 +175,16 @@ The batch pipeline is orchestrated by AWS Step Functions with a **self-looping c
 
 ### Pipeline Timing
 
-| Phase | Duration |
-|-------|----------|
-| Initial wait (Bronze data collection) | 15 min |
-| Full batch pipeline execution | ~8-10 min |
-| Wait between successful cycles | 10 min |
-| **Total cycle time** | **~18-20 min** |
+| Phase | Duration | Notes |
+|-------|----------|-------|
+| Initial wait (Bronze data collection) | 15 min | Ensures Bronze has enough data |
+| EMR job startup (cold start) | ~5-8 min | JARs download, Spark init |
+| Actual DQ/batch processing | ~2-3 min | Per job |
+| Full batch pipeline execution | ~15-25 min | 5 jobs × (startup + processing) |
+| Wait between successful cycles | 10 min | Prevents resource contention |
+| **Total cycle time** | **~25-35 min** | End-to-end |
+
+> **Note:** Step Function job timeouts are set to **15 minutes (900s)** to accommodate EMR Serverless cold starts and JAR downloads.
 
 ### Data Quality Gates
 
@@ -204,9 +208,10 @@ All DQ results are persisted to `dq_audit.quality_results` for audit and trend a
 ### Key Features
 
 - **≤3 minute** Bronze ingestion latency (Spark Structured Streaming)
-- **≤20 minute** end-to-end SLA for dashboard freshness (continuous batch cycles)
+- **≤35 minute** end-to-end SLA for dashboard freshness (continuous batch cycles)
 - **Exactly-once semantics** via Spark checkpointing and idempotent MERGE
 - **Self-looping batch pipeline** with automatic 10-minute intervals between cycles
+- **15-minute job timeout** to accommodate EMR Serverless cold starts
 - **Fail-fast on DQ failure** - pipeline stops on any gate failure (prevents cascading bad data)
 - **Auto-recovery** Lambda restarts Bronze streaming job on health check failure
 - **Data quality gates** that block downstream processing on failures
@@ -257,6 +262,7 @@ All DQ results are persisted to `dq_audit.quality_results` for audit and trend a
 | **Message Broker** | Amazon MSK (KRaft 3.9.x) | 2 brokers, topics: `raw-events`, `dlq-events` |
 | **Processing** | EMR Serverless (Spark 3.5) | Bronze streaming + Silver/Gold batch |
 | **Storage** | S3 Tables (Iceberg 1.10.0) | Medallion architecture tables |
+| **Initial Trigger** | EventBridge Scheduler | One-time serverless trigger (auto-deletes after use) |
 | **Orchestration** | Step Functions (self-looping) | Continuous batch pipeline with 10-min intervals |
 | **Auto-Recovery** | Lambda + CloudWatch | Bronze job health monitoring |
 | **Monitoring** | CloudWatch + SNS | Dashboard, metrics, alerts |
@@ -544,14 +550,24 @@ These tables enable:
 For development, use the provided scripts to destroy/recreate costly infrastructure:
 
 ```bash
-# End of day - saves ~$19/day by destroying NAT, MSK, EMR
-./scripts/destroy_infra.sh
+# End of day - full teardown with verification (idempotent, safe to run multiple times)
+./scripts/destroy_all.sh
 
 # Start of day - recreates infrastructure (~25-35 min)
+# Safe to close terminal after completion - uses EventBridge Scheduler
 ./scripts/create_infra.sh
 ```
 
-**Preserved during destroy:** S3 buckets, S3 Tables (your data), ECR images, Terraform state
+**destroy_all.sh features:**
+- 13-step teardown with status tracking
+- Handles S3 Tables async deletion gracefully
+- Final verification step confirms all resources deleted
+- Clear summary report at completion
+
+**create_infra.sh features:**
+- Idempotent (safe to re-run)
+- Uses EventBridge Scheduler for batch pipeline (serverless, survives terminal close)
+- Waits for MSK readiness before starting jobs
 
 ---
 
@@ -591,7 +607,7 @@ aws s3 sync ../spark/jobs/ s3://${DATA_BUCKET}/spark/jobs/
 ./scripts/create_infra.sh  # Starts ECS producer + Bronze streaming job + schedules batch pipeline
 ```
 
-> **Note:** The batch pipeline automatically starts 15 minutes after `create_infra.sh` to allow Bronze layer to collect sufficient data. It then runs continuously with 10-minute intervals between cycles.
+> **Note:** The batch pipeline is scheduled via **EventBridge Scheduler** (serverless) to start 15 minutes after `create_infra.sh`. You can safely close the terminal immediately - the scheduler runs entirely in AWS. After the initial trigger, the pipeline self-loops with 10-minute intervals between cycles.
 
 ### Verify Pipeline
 
@@ -633,13 +649,26 @@ docker-compose up -d
 - Pipeline failures and trends
 - Infrastructure metrics (MSK, ECS, EMR)
 
-### Business Analytics (QuickSight)
+### Business Analytics (QuickSight - Manual Setup)
 
-AWS QuickSight dashboards for stakeholder insights:
-- Edit activity trends
+AWS QuickSight dashboards for stakeholder insights (create manually via Console):
+
+```bash
+# Connect QuickSight to Gold layer via Athena:
+# QuickSight Console → Datasets → New Dataset → Athena
+# - Catalog: AwsDataCatalog
+# - Database: s3tablesbucket.gold
+# - Tables: hourly_stats, risk_scores, daily_analytics_summary
+```
+
+**Available insights:**
+- Edit activity trends and volume KPIs
 - Regional and language analysis
-- Risk score monitoring
-- Contributor patterns
+- Risk score monitoring (high/medium/low)
+- Bot vs human contributor patterns
+- Platform health score trends
+
+> **Note:** The `quicksight/` folder contains reference JSON specifications for datasets and dashboards. These are not auto-deployed - use them as a guide when creating dashboards manually in the QuickSight Console.
 
 ---
 
@@ -679,18 +708,17 @@ wikistream/
 │   └── settings.py                    # Domain filters, regions, SLAs
 ├── scripts/
 │   ├── setup_terraform_backend.sh     # Setup S3 + DynamoDB for state
-│   ├── create_infra.sh                # Start infrastructure + pipeline
-│   ├── destroy_infra.sh               # Stop costly resources (preserves data)
-│   └── deploy.sh                      # Full deployment script
+│   ├── create_infra.sh                # Start infrastructure + pipeline (EventBridge Scheduler)
+│   ├── destroy_all.sh                 # Full teardown with verification (13-step)
+│   └── destroy_infra_only.sh          # Stop costly resources (preserves data)
 ├── monitoring/
 │   ├── docker/                        # Dockerized Grafana setup
 │   │   ├── docker-compose.yml
 │   │   └── grafana/provisioning/      # Auto-provisioned datasources
-│   ├── grafana/dashboards/            # Pipeline health dashboard
-│   └── cloudwatch/alarms.json         # CloudWatch alarm definitions
-└── quicksight/
-    ├── datasets/                      # QuickSight dataset configs
-    └── dashboards/                    # Dashboard definitions
+│   └── grafana/dashboards/            # Pipeline health dashboard
+└── quicksight/                        # QuickSight reference configs (manual setup)
+    ├── datasets/                      # Dataset definitions for Athena connection
+    └── dashboards/                    # Dashboard specifications
 ```
 
 ---

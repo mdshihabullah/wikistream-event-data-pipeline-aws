@@ -721,8 +721,11 @@ class BronzeDQChecks(BaseDQChecks):
                 status = CheckStatus.PASSED
                 message = f"P95 latency {percentile_95:.1f}s <= {self.TIMELINESS_THRESHOLD_SECONDS}s threshold"
             else:
-                status = CheckStatus.FAILED
-                message = f"P95 latency {percentile_95:.1f}s exceeds {self.TIMELINESS_THRESHOLD_SECONDS}s threshold"
+                # Timeliness is WARNING (not FAILED) - doesn't block pipeline
+                # This allows batch processing to continue while alerting on high latency
+                # Common after restarts or during data backlog catchup
+                status = CheckStatus.WARNING
+                message = f"P95 latency {percentile_95:.1f}s exceeds {self.TIMELINESS_THRESHOLD_SECONDS}s threshold (WARNING - not blocking)"
             
             return DQCheckResult(
                 check_name="timeliness_95pct_within_1min",

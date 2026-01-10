@@ -52,6 +52,16 @@ echo ""
 AWS_REGION="${AWS_REGION:-us-east-1}"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
+# Clean up any existing one-time EventBridge schedules from previous runs
+EXISTING_SCHEDULE=$(aws scheduler list-schedules \
+    --name-prefix "wikistream-initial-batch" \
+    --query 'Schedules[0].Name' \
+    --output text 2>/dev/null || echo "None")
+if [ "$EXISTING_SCHEDULE" != "None" ] && [ -n "$EXISTING_SCHEDULE" ]; then
+    log_info "Cleaning up existing one-time schedule: $EXISTING_SCHEDULE"
+    aws scheduler delete-schedule --name "$EXISTING_SCHEDULE" 2>/dev/null || true
+fi
+
 echo "📋 Configuration:"
 echo "   AWS Account: ${AWS_ACCOUNT_ID}"
 echo "   AWS Region:  ${AWS_REGION}"
@@ -330,11 +340,36 @@ if [ "$EMR_STATE" != "STARTED" ]; then
 fi
 
 # Wait for MSK to be fully ready for connections
-log_info "Waiting 30s for MSK cluster to stabilize..."
+log_info "Waiting for MSK cluster to be ready..."
+MSK_CLUSTER_ARN=$(aws kafka list-clusters \
+    --query 'ClusterInfoList[?contains(ClusterName,`wikistream`)].ClusterArn' \
+    --output text 2>/dev/null || echo "")
+
+if [ -n "$MSK_CLUSTER_ARN" ]; then
+    for i in {1..12}; do  # Max 2 minutes
+        MSK_STATE=$(aws kafka describe-cluster --cluster-arn "$MSK_CLUSTER_ARN" \
+            --query 'ClusterInfo.State' --output text 2>/dev/null || echo "UNKNOWN")
+        if [ "$MSK_STATE" == "ACTIVE" ]; then
+            log_success "MSK cluster is ACTIVE"
+            break
+        fi
+        echo -n "."
+        sleep 10
+    done
+    echo ""
+else
+    log_warning "Could not find MSK cluster ARN, waiting 60s..."
+    sleep 60
+fi
+
+# Additional stabilization wait for fresh clusters
+log_info "Allowing 30s for broker initialization..."
 sleep 30
 
 # Start Bronze streaming job
-log_info "Submitting Bronze streaming job..."
+# Resource allocation: 4 vCPU total (1 driver + 1 executor) to fit within 16 vCPU quota
+# This leaves 12 vCPU available for batch jobs to run without resource contention
+log_info "Submitting Bronze streaming job (4 vCPU - optimized for 16 vCPU quota)..."
 JOB_RUN_ID=$(aws emr-serverless start-job-run \
     --application-id ${EMR_APP_ID} \
     --execution-role-arn ${EMR_ROLE_ARN} \
@@ -343,7 +378,7 @@ JOB_RUN_ID=$(aws emr-serverless start-job-run \
         "sparkSubmit": {
             "entryPoint": "s3://'"${DATA_BUCKET}"'/spark/jobs/bronze_streaming_job.py",
             "entryPointArguments": ["'"${MSK_BOOTSTRAP}"'", "'"${DATA_BUCKET}"'"],
-            "sparkSubmitParameters": "--conf spark.driver.cores=2 --conf spark.driver.memory=4g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=2 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,software.amazon.msk:aws-msk-iam-auth:2.2.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse='"${S3_TABLES_ARN}"' --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+            "sparkSubmitParameters": "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false --conf spark.jars.packages=org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,software.amazon.awssdk:bundle:2.29.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,software.amazon.msk:aws-msk-iam-auth:2.2.0 --conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.adaptive.coalescePartitions.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse='"${S3_TABLES_ARN}"' --conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
         }
     }' \
     --configuration-overrides '{
@@ -370,21 +405,45 @@ echo ""
 echo "⏰ Step 7/7: Scheduling batch pipeline to start in 15 minutes..."
 
 log_info "Bronze streaming needs time to collect data before batch processing can start"
-log_info "The batch pipeline will start automatically after 15 minutes"
+log_info "Using EventBridge Scheduler for robust one-time trigger (serverless)"
 log_info "Pipeline flow: Bronze DQ → Silver → Silver DQ → Gold → Gold DQ → Wait 10min → Repeat"
 
-# Start the batch pipeline in background after 15 minutes
-(
-    sleep 900  # Wait 15 minutes
-    echo "[$(date)] Starting initial batch pipeline execution..."
-    aws stepfunctions start-execution \
-        --state-machine-arn "arn:aws:states:${AWS_REGION}:${AWS_ACCOUNT_ID}:stateMachine:wikistream-dev-batch-pipeline" \
-        --input '{"triggered_by": "initial_start", "wait_minutes": 15}' \
-        > /dev/null 2>&1 && \
-    echo "[$(date)] ✅ Batch pipeline started! It will now run continuously."
-) &
-BATCH_SCHEDULER_PID=$!
-log_success "Batch pipeline scheduler started (PID: ${BATCH_SCHEDULER_PID})"
+# Calculate schedule time (15 minutes from now in UTC)
+SCHEDULE_TIME=$(date -u -v+15M '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '+15 minutes' '+%Y-%m-%dT%H:%M:%S')
+SCHEDULE_NAME="wikistream-initial-batch-$(date +%s)"
+
+# Get the EventBridge scheduler role ARN (same as the eventbridge_sfn role)
+SCHEDULER_ROLE_ARN=$(aws iam get-role --role-name wikistream-dev-eventbridge-sfn-role \
+    --query 'Role.Arn' --output text 2>/dev/null || echo "")
+
+if [ -z "$SCHEDULER_ROLE_ARN" ]; then
+    log_error "Could not find EventBridge scheduler role"
+    log_warning "Falling back to manual start instruction"
+else
+    # Create one-time EventBridge Scheduler to trigger Step Function
+    log_info "Creating one-time schedule for ${SCHEDULE_TIME} UTC..."
+    
+    aws scheduler create-schedule \
+        --name "$SCHEDULE_NAME" \
+        --schedule-expression "at(${SCHEDULE_TIME})" \
+        --flexible-time-window '{"Mode": "OFF"}' \
+        --target "{
+            \"Arn\": \"arn:aws:states:${AWS_REGION}:${AWS_ACCOUNT_ID}:stateMachine:wikistream-dev-batch-pipeline\",
+            \"RoleArn\": \"${SCHEDULER_ROLE_ARN}\",
+            \"Input\": \"{\\\"triggered_by\\\": \\\"eventbridge_scheduler\\\", \\\"initial_start\\\": true}\"
+        }" \
+        --action-after-completion "DELETE" \
+        --state "ENABLED" \
+        --no-cli-pager > /dev/null 2>&1
+
+    if [ $? -eq 0 ]; then
+        log_success "EventBridge schedule created: ${SCHEDULE_NAME}"
+        log_info "Schedule time: ${SCHEDULE_TIME} UTC (auto-deletes after execution)"
+    else
+        log_warning "Failed to create EventBridge schedule"
+        log_info "You can manually start the batch pipeline after 15 minutes"
+    fi
+fi
 
 # =============================================================================
 # Summary
@@ -403,6 +462,7 @@ echo "   • S3 Data Bucket: ${DATA_BUCKET}"
 echo "   • S3 Tables Bucket (with auto-maintenance & Intelligent-Tiering)"
 echo "   • S3 Tables Namespaces: bronze, silver, gold, dq_audit"
 echo "   • DQ Gates: Bronze → Silver → Gold (blocks on failure)"
+echo "   • EventBridge Scheduler (one-time trigger for batch pipeline)"
 echo ""
 echo "🔄 Running Jobs:"
 echo "   • ECS Producer: Starting..."
@@ -412,21 +472,25 @@ echo "🔗 Console Links:"
 echo "   EMR: https://${AWS_REGION}.console.aws.amazon.com/emr/home?region=${AWS_REGION}#/serverless/applications/${EMR_APP_ID}"
 echo "   ECS: https://${AWS_REGION}.console.aws.amazon.com/ecs/v2/clusters/${ECS_CLUSTER}/services"
 echo "   Dashboard: https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#dashboards:name=wikistream-dev-pipeline-dashboard"
+echo "   Scheduler: https://${AWS_REGION}.console.aws.amazon.com/scheduler/home?region=${AWS_REGION}#schedules"
 echo ""
 echo "⏱️  Pipeline Timeline:"
-echo "   • Now:        Producer connects to MSK"
+echo "   • Now:        Producer connects to MSK, Bronze streaming starts"
 echo "   • +2 min:     Bronze streaming processes first batch"
-echo "   • +15 min:    Batch pipeline starts automatically"
-echo "   • Continuous: Pipeline loops every ~15-20 min (10 min wait between cycles)"
+echo "   • +15 min:    Batch pipeline starts via EventBridge Scheduler (serverless)"
+echo "   • Continuous: Pipeline self-loops every ~20-25 min (10 min wait between cycles)"
 echo ""
 echo "🔄 Batch Pipeline Flow (continuous on success):"
 echo "   Bronze DQ → Silver → Silver DQ → Gold → Gold DQ"
-echo "   ↓ SUCCESS: Wait 10min → Repeat"
+echo "   ↓ SUCCESS: Wait 10min → Self-trigger next cycle"
 echo "   ↓ FAILURE: Stop loop (manual restart required after fix)"
 echo ""
 echo "📊 Manual Control:"
 echo "   • Start:   aws stepfunctions start-execution --state-machine-arn arn:aws:states:${AWS_REGION}:${AWS_ACCOUNT_ID}:stateMachine:wikistream-dev-batch-pipeline"
 echo "   • Stop:    Use AWS Console to stop the running execution"
 echo "   • Restart: After fixing issues, run the Start command above"
+echo ""
+echo "✅ You can safely close this terminal - batch pipeline will start"
+echo "   automatically via EventBridge Scheduler (serverless, no local process)"
 echo ""
 echo "🛑 End of day: ./scripts/destroy_all.sh"

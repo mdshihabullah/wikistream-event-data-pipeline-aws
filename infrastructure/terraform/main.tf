@@ -736,24 +736,26 @@ resource "aws_ecr_lifecycle_policy" "producer" {
 }
 
 # =============================================================================
-# EMR SERVERLESS APPLICATION (Optimized for 32 vCPU quota)
+# EMR SERVERLESS APPLICATION (Optimized for 16 vCPU quota)
 # =============================================================================
 # 
-# IMPORTANT: Request quota increase before deploying!
-# Default quota is 16 vCPU. Request 32 vCPU via Service Quotas console:
-# 1. AWS Console → Service Quotas → EMR Serverless
-# 2. Find "Max concurrent vCPUs per account" 
-# 3. Request increase to 32 vCPU
-# 4. Wait for approval (usually 24-48 hours for paid accounts)
+# CURRENT QUOTA: 16 vCPU (default EMR Serverless limit)
+# To request increase: AWS Console → Service Quotas → EMR Serverless
+#   → "Max concurrent vCPUs per account" → Request 32 vCPU
 #
-# Resource allocation strategy:
-# - Bronze streaming (continuous): 4 vCPU driver + 4 vCPU executors = 8 vCPU
-# - Batch jobs run SEQUENTIALLY via unified Step Function:
-#   - Silver: 2 vCPU driver + 4 vCPU executors = 6 vCPU
-#   - Data Quality: 2 vCPU driver + 4 vCPU executors = 6 vCPU  
-#   - Gold: 2 vCPU driver + 4 vCPU executors = 6 vCPU
-# Total concurrent max: Bronze (8) + one batch job (6) = 14 vCPU (within 16 quota)
-# With 32 quota: Bronze (8) + more executor headroom for spikes
+# Resource allocation strategy (fits within 16 vCPU):
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │ Component              │ Driver  │ Executor      │ Total vCPU │ Runs       │
+# ├────────────────────────┼─────────┼───────────────┼────────────┼────────────┤
+# │ Bronze Streaming       │ 1×2vCPU │ 1×2vCPU       │ 4 vCPU     │ Continuous │
+# │ Batch Jobs (each)      │ 1×1vCPU │ 1×2vCPU       │ 3-4 vCPU   │ Sequential │
+# └────────────────────────────────────────────────────────────────────────────┘
+#
+# Maximum concurrent usage: Bronze (4 vCPU) + 1 batch job (4 vCPU) = 8 vCPU
+# Headroom: 16 - 8 = 8 vCPU for EMR overhead and spikes
+#
+# Batch pipeline runs SEQUENTIALLY: BronzeDQ → Silver → SilverDQ → Gold → GoldDQ
+# Each job completes before the next starts, preventing resource contention.
 # =============================================================================
 
 resource "aws_emrserverless_application" "spark" {
@@ -761,12 +763,13 @@ resource "aws_emrserverless_application" "spark" {
   release_label = "emr-7.12.0" # Iceberg format-version 3 support with Apache Iceberg 1.10.0
   type          = "SPARK"
 
-  # Maximum capacity aligned with requested quota (32 vCPU)
-  # This provides headroom for Bronze streaming + one batch job
+  # Maximum capacity aligned with current 16 vCPU quota
+  # Bronze streaming (4 vCPU) + batch job (4 vCPU) = 8 vCPU typical usage
+  # Setting to 16 vCPU to match account quota limit
   maximum_capacity {
-    cpu    = "32 vCPU" # Request quota increase to 32 vCPU
-    memory = "128 GB"  # 4 GB per vCPU ratio
-    disk   = "400 GB"  # For Spark shuffle and temp data
+    cpu    = "16 vCPU" # Current account quota (increase to 32 if approved)
+    memory = "64 GB"   # 4 GB per vCPU ratio
+    disk   = "200 GB"  # For Spark shuffle and temp data
   }
 
   auto_start_configuration {
@@ -998,7 +1001,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.bronzeDQResult",
-      "TimeoutSeconds": 600,
+      "TimeoutSeconds": 900,
       "Next": "RecordBronzeDQSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1049,7 +1052,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.silverResult",
-      "TimeoutSeconds": 600,
+      "TimeoutSeconds": 900,
       "Next": "RecordSilverSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1100,7 +1103,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.silverDQResult",
-      "TimeoutSeconds": 600,
+      "TimeoutSeconds": 900,
       "Next": "RecordSilverDQSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1151,7 +1154,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.goldResult",
-      "TimeoutSeconds": 600,
+      "TimeoutSeconds": 900,
       "Next": "RecordGoldSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1202,7 +1205,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.goldDQResult",
-      "TimeoutSeconds": 600,
+      "TimeoutSeconds": 900,
       "Next": "RecordPipelineComplete",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1425,7 +1428,7 @@ resource "aws_sfn_state_machine" "silver_processing" {
         }
       },
       "ResultPath": "$.jobResult",
-      "TimeoutSeconds": 600,
+      "TimeoutSeconds": 900,
       "Next": "RecordSuccessMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1524,7 +1527,7 @@ resource "aws_sfn_state_machine" "gold_processing" {
         }
       },
       "ResultPath": "$.jobResult",
-      "TimeoutSeconds": 600,
+      "TimeoutSeconds": 900,
       "Next": "RecordSuccessMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1623,7 +1626,7 @@ resource "aws_sfn_state_machine" "data_quality" {
         }
       },
       "ResultPath": "$.jobResult",
-      "TimeoutSeconds": 300,
+      "TimeoutSeconds": 900,
       "Next": "RecordQualityMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1761,7 +1764,12 @@ resource "aws_iam_role" "eventbridge_sfn" {
     Statement = [{
       Action    = "sts:AssumeRole"
       Effect    = "Allow"
-      Principal = { Service = "events.amazonaws.com" }
+      Principal = { 
+        Service = [
+          "events.amazonaws.com",      # EventBridge Rules
+          "scheduler.amazonaws.com"    # EventBridge Scheduler (one-time triggers)
+        ]
+      }
     }]
   })
 }
@@ -1855,7 +1863,8 @@ resource "aws_lambda_function" "bronze_restart" {
 }
 
 # Lambda code - inline for simplicity
-# Optimized for 8 vCPU total (2 driver + 2 executors × 2 vCPU each)
+# Optimized for 4 vCPU total to fit within 16 vCPU quota (1 driver + 1 executor × 2 vCPU each)
+# This leaves 12 vCPU available for batch jobs to run without resource contention
 data "archive_file" "bronze_restart_lambda" {
   type        = "zip"
   output_path = "${path.module}/bronze_restart_lambda.zip"
@@ -1876,7 +1885,10 @@ sns_client = boto3.client('sns')
 def handler(event, context):
     """
     Lambda handler to restart Bronze streaming job when CloudWatch alarm triggers.
-    Optimized for 8 vCPU total: 2 vCPU driver + 2 executors × 2 vCPU each
+    
+    Resource allocation optimized for 16 vCPU quota:
+    - Bronze streaming: 4 vCPU (1 driver 2 vCPU + 1 executor 2 vCPU)
+    - Leaves 12 vCPU for batch jobs (each ~4 vCPU)
     """
     logger.info(f"Received event: {json.dumps(event)}")
     
@@ -1904,8 +1916,9 @@ def handler(event, context):
                 'body': json.dumps({'message': 'Bronze job already running', 'jobId': bronze_jobs[0]['id']})
             }
         
-        # Start new Bronze streaming job with optimized resource allocation
-        # Total: 8 vCPU = 2 vCPU driver + 2 executors × 2 vCPU
+        # Start new Bronze streaming job with resource-optimized allocation
+        # Total: 4 vCPU = 1 driver (2 vCPU min) + 1 executor (2 vCPU)
+        # This fits within 16 vCPU quota while leaving room for batch jobs
         iceberg_packages = (
             "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,"
             "software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,"
@@ -1915,11 +1928,11 @@ def handler(event, context):
         )
         
         spark_conf = (
-            f"--conf spark.driver.cores=2 "
-            f"--conf spark.driver.memory=4g "
+            f"--conf spark.driver.cores=1 "
+            f"--conf spark.driver.memory=2g "
             f"--conf spark.executor.cores=2 "
             f"--conf spark.executor.memory=4g "
-            f"--conf spark.executor.instances=2 "
+            f"--conf spark.executor.instances=1 "
             f"--conf spark.dynamicAllocation.enabled=false "
             f"--conf spark.jars.packages={iceberg_packages} "
             f"--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
@@ -1969,7 +1982,7 @@ def handler(event, context):
                 'severity': 'INFO',
                 'job_id': job_id,
                 'application_id': app_id,
-                'resource_allocation': '8 vCPU (2 driver + 2x2 executor)',
+                'resource_allocation': '4 vCPU (1 driver + 1 executor)',
                 'message': 'Bronze streaming job was automatically restarted after health check failure'
             }, indent=2)
         )

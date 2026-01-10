@@ -78,11 +78,37 @@ if [ -z "$AWS_ACCOUNT_ID" ]; then
 fi
 log_info "AWS Account: $AWS_ACCOUNT_ID, Region: $AWS_REGION"
 
-# =============================================================================
-# STEP 1: DISABLE EVENTBRIDGE RULES (Stop new triggers)
-# =============================================================================
-log_step "STEP 1: Disabling EventBridge Rules"
+# Track deletion status for final summary
+declare -A DELETION_STATUS
+DELETION_STATUS["eventbridge"]="pending"
+DELETION_STATUS["stepfunctions"]="pending"
+DELETION_STATUS["emr_jobs"]="pending"
+DELETION_STATUS["emr_app"]="pending"
+DELETION_STATUS["ecs"]="pending"
+DELETION_STATUS["terraform"]="pending"
+DELETION_STATUS["s3_tables"]="pending"
+DELETION_STATUS["s3_bucket"]="pending"
+DELETION_STATUS["ecr"]="pending"
+DELETION_STATUS["cloudwatch"]="pending"
 
+# =============================================================================
+# STEP 1: DISABLE EVENTBRIDGE (Rules + Scheduler)
+# =============================================================================
+log_step "STEP 1: Disabling EventBridge Rules & Schedules"
+
+# Delete EventBridge Scheduler schedules (one-time triggers)
+SCHEDULES=$(aws scheduler list-schedules --name-prefix "wikistream" --query 'Schedules[*].Name' --output text 2>/dev/null || echo "")
+if [ -n "$SCHEDULES" ]; then
+    for SCHEDULE in $SCHEDULES; do
+        log_info "Deleting schedule: $SCHEDULE"
+        aws scheduler delete-schedule --name "$SCHEDULE" 2>/dev/null || true
+    done
+    log_success "EventBridge schedules deleted"
+else
+    log_info "No EventBridge schedules found"
+fi
+
+# Disable EventBridge Rules
 RULES=$(aws events list-rules --name-prefix "wikistream" --query 'Rules[*].Name' --output text 2>/dev/null || echo "")
 if [ -n "$RULES" ]; then
     for RULE in $RULES; do
@@ -93,6 +119,7 @@ if [ -n "$RULES" ]; then
 else
     log_info "No EventBridge rules found"
 fi
+DELETION_STATUS["eventbridge"]="done"
 
 # =============================================================================
 # STEP 2: STOP STEP FUNCTIONS EXECUTIONS
@@ -118,6 +145,7 @@ if [ -n "$SFN_ARNS" ]; then
 else
     log_info "No Step Functions found"
 fi
+DELETION_STATUS["stepfunctions"]="done"
 
 # =============================================================================
 # STEP 3: CANCEL ALL EMR SERVERLESS JOBS AND WAIT
@@ -162,6 +190,7 @@ if [ -n "$EMR_APPS" ]; then
 else
     log_info "No EMR Serverless applications found"
 fi
+DELETION_STATUS["emr_jobs"]="done"
 
 # =============================================================================
 # STEP 4: STOP EMR SERVERLESS APPLICATIONS AND WAIT
@@ -199,6 +228,7 @@ if [ -n "$EMR_APPS" ]; then
 else
     log_info "No EMR applications to stop"
 fi
+DELETION_STATUS["emr_app"]="done"
 
 # =============================================================================
 # STEP 5: STOP ECS SERVICES
@@ -224,6 +254,7 @@ if [ -n "$ECS_CLUSTERS" ]; then
 else
     log_info "No ECS clusters found"
 fi
+DELETION_STATUS["ecs"]="done"
 
 # =============================================================================
 # STEP 6: TERRAFORM DESTROY (Primary Method)
@@ -240,11 +271,14 @@ if [ -f "terraform.tfstate" ] || [ -d ".terraform" ]; then
     log_info "Running terraform destroy..."
     if terraform destroy -auto-approve -input=false 2>&1; then
         log_success "Terraform destroy completed"
+        DELETION_STATUS["terraform"]="done"
     else
         log_warning "Terraform destroy had errors, continuing with CLI cleanup..."
+        DELETION_STATUS["terraform"]="partial"
     fi
 else
     log_warning "No Terraform state found, using CLI cleanup only"
+    DELETION_STATUS["terraform"]="skipped"
 fi
 
 cd "$PROJECT_ROOT"
@@ -255,27 +289,50 @@ cd "$PROJECT_ROOT"
 log_step "STEP 7: Deleting S3 Tables"
 
 TABLE_BUCKET_ARN="arn:aws:s3tables:${AWS_REGION}:${AWS_ACCOUNT_ID}:bucket/wikistream-dev-tables"
+S3_TABLES_DELETED=0
+S3_TABLES_TOTAL=0
 
 if aws s3tables get-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" &>/dev/null; then
+    log_info "S3 Tables bucket found, deleting tables and namespaces..."
+    log_info "Note: S3 Tables deletion can take several minutes per table"
+    
     for NS in bronze silver gold dq_audit; do
         TABLES=$(aws s3tables list-tables --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" --query 'tables[*].name' --output text 2>/dev/null || echo "")
-        if [ -n "$TABLES" ]; then
+        if [ -n "$TABLES" ] && [ "$TABLES" != "None" ]; then
             for TABLE in $TABLES; do
-                log_info "Deleting table: ${NS}.${TABLE}"
-                aws s3tables delete-table --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" --name "$TABLE" 2>/dev/null || true
+                S3_TABLES_TOTAL=$((S3_TABLES_TOTAL + 1))
+                log_info "Deleting table: ${NS}.${TABLE} (may take 1-2 min)..."
+                if aws s3tables delete-table --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" --name "$TABLE" 2>/dev/null; then
+                    S3_TABLES_DELETED=$((S3_TABLES_DELETED + 1))
+                    log_success "  Table ${NS}.${TABLE} deleted"
+                else
+                    log_warning "  Failed to delete ${NS}.${TABLE} (may already be deleted)"
+                fi
             done
         fi
         
-        # Delete namespace
+        # Delete namespace (wait a moment for table deletions to propagate)
+        sleep 2
+        log_info "Deleting namespace: ${NS}..."
         aws s3tables delete-namespace --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" 2>/dev/null || true
     done
     
+    # Wait for table deletions to fully propagate before deleting bucket
+    log_info "Waiting for table deletions to propagate (30s)..."
+    sleep 30
+    
     # Delete table bucket
     log_info "Deleting table bucket..."
-    aws s3tables delete-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" 2>/dev/null || true
-    log_success "S3 Tables deleted"
+    if aws s3tables delete-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" 2>/dev/null; then
+        log_success "S3 Tables bucket deleted (${S3_TABLES_DELETED}/${S3_TABLES_TOTAL} tables)"
+        DELETION_STATUS["s3_tables"]="done"
+    else
+        log_warning "S3 Tables bucket deletion initiated (may complete asynchronously)"
+        DELETION_STATUS["s3_tables"]="pending_async"
+    fi
 else
     log_info "S3 Tables bucket not found (already deleted)"
+    DELETION_STATUS["s3_tables"]="done"
 fi
 
 # =============================================================================
@@ -324,9 +381,16 @@ if aws s3api head-bucket --bucket "$DATA_BUCKET" 2>/dev/null; then
     echo ""
     
     # Delete bucket
-    aws s3api delete-bucket --bucket "$DATA_BUCKET" 2>/dev/null && log_success "S3 bucket deleted" || log_warning "Failed to delete bucket (may have remaining objects)"
+    if aws s3api delete-bucket --bucket "$DATA_BUCKET" 2>/dev/null; then
+        log_success "S3 bucket deleted"
+        DELETION_STATUS["s3_bucket"]="done"
+    else
+        log_warning "Failed to delete bucket (may have remaining objects)"
+        DELETION_STATUS["s3_bucket"]="partial"
+    fi
 else
     log_info "S3 bucket not found (already deleted)"
+    DELETION_STATUS["s3_bucket"]="done"
 fi
 
 # =============================================================================
@@ -335,10 +399,16 @@ fi
 log_step "STEP 9: Deleting ECR Repository"
 
 if aws ecr describe-repositories --repository-names "wikistream-dev-producer" &>/dev/null; then
-    aws ecr delete-repository --repository-name "wikistream-dev-producer" --force 2>/dev/null
-    log_success "ECR repository deleted"
+    if aws ecr delete-repository --repository-name "wikistream-dev-producer" --force 2>/dev/null; then
+        log_success "ECR repository deleted"
+        DELETION_STATUS["ecr"]="done"
+    else
+        log_warning "Failed to delete ECR repository"
+        DELETION_STATUS["ecr"]="failed"
+    fi
 else
     log_info "ECR repository not found (already deleted)"
+    DELETION_STATUS["ecr"]="done"
 fi
 
 # =============================================================================
@@ -376,6 +446,7 @@ if [ -n "$ALARMS" ]; then
 fi
 
 log_success "CloudWatch resources deleted"
+DELETION_STATUS["cloudwatch"]="done"
 
 # =============================================================================
 # STEP 11: CLEANUP REMAINING RESOURCES (Fallback)
@@ -440,6 +511,15 @@ if [ -n "$RULES" ]; then
     done
 fi
 
+# Delete any remaining EventBridge Scheduler schedules
+SCHEDULES=$(aws scheduler list-schedules --name-prefix "wikistream" --query 'Schedules[*].Name' --output text 2>/dev/null || echo "")
+if [ -n "$SCHEDULES" ]; then
+    for SCHEDULE in $SCHEDULES; do
+        log_info "Deleting schedule: $SCHEDULE"
+        aws scheduler delete-schedule --name "$SCHEDULE" 2>/dev/null || true
+    done
+fi
+
 # Delete Lambda functions
 LAMBDAS=$(aws lambda list-functions --query 'Functions[?contains(FunctionName,`wikistream`)].FunctionName' --output text 2>/dev/null || echo "")
 if [ -n "$LAMBDAS" ]; then
@@ -479,17 +559,92 @@ fi
 rm -f "$PROJECT_ROOT/outputs.json" 2>/dev/null || true
 
 # =============================================================================
-# COMPLETE
+# STEP 13: FINAL VERIFICATION
+# =============================================================================
+log_step "STEP 13: Final Verification"
+
+VERIFY_ERRORS=0
+
+# Verify EMR applications deleted
+EMR_CHECK=$(aws emr-serverless list-applications --query 'applications[?contains(name,`wikistream`)].id' --output text 2>/dev/null || echo "")
+if [ -n "$EMR_CHECK" ]; then
+    log_warning "EMR applications still exist (may be terminating): $EMR_CHECK"
+    VERIFY_ERRORS=$((VERIFY_ERRORS + 1))
+else
+    log_success "✓ EMR applications: deleted"
+fi
+
+# Verify S3 Tables bucket deleted
+TABLE_BUCKET_CHECK=$(aws s3tables get-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" 2>&1 || echo "NOT_FOUND")
+if [[ "$TABLE_BUCKET_CHECK" == *"NOT_FOUND"* ]] || [[ "$TABLE_BUCKET_CHECK" == *"ResourceNotFoundException"* ]] || [[ "$TABLE_BUCKET_CHECK" == *"NoSuchBucket"* ]]; then
+    log_success "✓ S3 Tables bucket: deleted"
+else
+    log_warning "S3 Tables bucket may still be deleting (async operation)"
+    VERIFY_ERRORS=$((VERIFY_ERRORS + 1))
+fi
+
+# Verify S3 data bucket deleted
+if ! aws s3api head-bucket --bucket "$DATA_BUCKET" 2>/dev/null; then
+    log_success "✓ S3 data bucket: deleted"
+else
+    log_warning "S3 data bucket still exists"
+    VERIFY_ERRORS=$((VERIFY_ERRORS + 1))
+fi
+
+# Verify Step Functions deleted
+SFN_CHECK=$(aws stepfunctions list-state-machines --query 'stateMachines[?contains(name,`wikistream`)].name' --output text 2>/dev/null || echo "")
+if [ -z "$SFN_CHECK" ]; then
+    log_success "✓ Step Functions: deleted"
+else
+    log_warning "Step Functions still exist: $SFN_CHECK"
+    VERIFY_ERRORS=$((VERIFY_ERRORS + 1))
+fi
+
+# Verify ECR repository deleted
+if ! aws ecr describe-repositories --repository-names "wikistream-dev-producer" &>/dev/null; then
+    log_success "✓ ECR repository: deleted"
+else
+    log_warning "ECR repository still exists"
+    VERIFY_ERRORS=$((VERIFY_ERRORS + 1))
+fi
+
+# =============================================================================
+# COMPLETE - SUMMARY
 # =============================================================================
 echo ""
-echo "========================================"
-echo -e "${GREEN}✅ FULL DESTROY COMPLETED${NC}"
-echo "========================================"
+echo "════════════════════════════════════════════════════════════════════"
+if [ $VERIFY_ERRORS -eq 0 ]; then
+    echo -e "${GREEN}✅ FULL DESTROY COMPLETED SUCCESSFULLY${NC}"
+else
+    echo -e "${YELLOW}⚠️  DESTROY COMPLETED WITH NOTES${NC}"
+fi
+echo "════════════════════════════════════════════════════════════════════"
 echo ""
-echo "All WikiStream resources have been deleted."
+echo "📋 Deletion Summary:"
+echo "   ├─ EventBridge:    ${DELETION_STATUS["eventbridge"]:-unknown}"
+echo "   ├─ Step Functions: ${DELETION_STATUS["stepfunctions"]:-unknown}"
+echo "   ├─ EMR Jobs:       ${DELETION_STATUS["emr_jobs"]:-unknown}"
+echo "   ├─ EMR App:        ${DELETION_STATUS["emr_app"]:-unknown}"
+echo "   ├─ ECS:            ${DELETION_STATUS["ecs"]:-unknown}"
+echo "   ├─ Terraform:      ${DELETION_STATUS["terraform"]:-unknown}"
+echo "   ├─ S3 Tables:      ${DELETION_STATUS["s3_tables"]:-unknown}"
+echo "   ├─ S3 Bucket:      ${DELETION_STATUS["s3_bucket"]:-unknown}"
+echo "   ├─ ECR:            ${DELETION_STATUS["ecr"]:-unknown}"
+echo "   └─ CloudWatch:     ${DELETION_STATUS["cloudwatch"]:-unknown}"
 echo ""
-echo "Note: Some resources (MSK, NAT Gateway) may take"
-echo "a few minutes to fully terminate in the background."
+if [ $VERIFY_ERRORS -gt 0 ]; then
+    echo -e "${YELLOW}⚠️  Note: $VERIFY_ERRORS resource(s) may still be terminating.${NC}"
+    echo "   This is normal for MSK clusters and S3 Tables (can take 5-15 min)."
+    echo "   They will complete deletion in the background."
+    echo ""
+fi
+echo "🕐 Background deletions (no action needed):"
+echo "   • MSK cluster: ~10-15 minutes to fully terminate"
+echo "   • NAT Gateway: ~2-5 minutes"
+echo "   • S3 Tables: ~5-10 minutes if async"
+echo ""
+echo "✅ Safe to run create_infra.sh immediately - Terraform"
+echo "   will create new resources with fresh identifiers."
 echo ""
 echo "To recreate from scratch:"
 echo "  ./scripts/create_infra.sh"
