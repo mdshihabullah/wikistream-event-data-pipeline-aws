@@ -17,6 +17,10 @@ terraform {
       source  = "hashicorp/archive"
       version = "~> 2.4"
     }
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.9"
+    }
   }
 
   backend "s3" {
@@ -156,6 +160,9 @@ resource "aws_security_group" "emr" {
 
 resource "aws_s3_bucket" "data" {
   bucket = "${local.name_prefix}-data-${local.account_id}"
+  
+  # Allow Terraform to delete bucket even with objects (for clean destroy)
+  force_destroy = true
 }
 
 resource "aws_s3_bucket_versioning" "data" {
@@ -249,6 +256,12 @@ resource "aws_s3tables_table_bucket" "wikistream" {
   }
 }
 
+# Time delay to ensure IAM roles propagate before bucket policy
+resource "time_sleep" "wait_for_iam" {
+  depends_on      = [aws_iam_role.emr_serverless, aws_iam_role_policy.emr_serverless]
+  create_duration = "30s"
+}
+
 # S3 Tables Bucket Policy - Allow EMR Serverless Access
 resource "aws_s3tables_table_bucket_policy" "wikistream" {
   table_bucket_arn = aws_s3tables_table_bucket.wikistream.arn
@@ -256,18 +269,24 @@ resource "aws_s3tables_table_bucket_policy" "wikistream" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "AllowEMRServerlessFullAccess"
+        Sid    = "AllowAccountAccess"
         Effect = "Allow"
         Principal = {
-          AWS = aws_iam_role.emr_serverless.arn
+          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
         }
         Action = [
           "s3tables:*"
         ]
-        Resource = "*"
+        Resource = [
+          aws_s3tables_table_bucket.wikistream.arn,
+          "${aws_s3tables_table_bucket.wikistream.arn}/*"
+        ]
       }
     ]
   })
+
+  # Ensure IAM roles are fully propagated
+  depends_on = [time_sleep.wait_for_iam]
 }
 
 # Namespaces for Medallion Architecture
@@ -856,6 +875,12 @@ resource "aws_iam_role_policy" "step_functions" {
         }
       },
       {
+        Sid    = "SelfTrigger"
+        Effect = "Allow"
+        Action = ["states:StartExecution"]
+        Resource = "arn:aws:states:${local.region}:${local.account_id}:stateMachine:${local.name_prefix}-batch-pipeline"
+      },
+      {
         Sid      = "SNSPublish"
         Effect   = "Allow"
         Action   = ["sns:Publish"]
@@ -973,7 +998,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.bronzeDQResult",
-      "TimeoutSeconds": 180,
+      "TimeoutSeconds": 600,
       "Next": "RecordBronzeDQSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1024,7 +1049,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.silverResult",
-      "TimeoutSeconds": 180,
+      "TimeoutSeconds": 600,
       "Next": "RecordSilverSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1075,7 +1100,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.silverDQResult",
-      "TimeoutSeconds": 180,
+      "TimeoutSeconds": 600,
       "Next": "RecordSilverDQSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1126,7 +1151,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.goldResult",
-      "TimeoutSeconds": 180,
+      "TimeoutSeconds": 600,
       "Next": "RecordGoldSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1177,7 +1202,7 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         }
       },
       "ResultPath": "$.goldDQResult",
-      "TimeoutSeconds": 180,
+      "TimeoutSeconds": 600,
       "Next": "RecordPipelineComplete",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1206,7 +1231,25 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
         ]
       },
       "ResultPath": null,
-      "Next": "Success"
+      "Next": "WaitBeforeNextCycle"
+    },
+    "WaitBeforeNextCycle": {
+      "Type": "Wait",
+      "Comment": "Wait 10 minutes before starting the next pipeline cycle",
+      "Seconds": 600,
+      "Next": "TriggerNextCycle"
+    },
+    "TriggerNextCycle": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::states:startExecution",
+      "Parameters": {
+        "StateMachineArn": "arn:aws:states:${local.region}:${local.account_id}:stateMachine:${local.name_prefix}-batch-pipeline",
+        "Input": {
+          "triggered_by": "self_loop",
+          "previous_status": "SUCCESS"
+        }
+      },
+      "End": true
     },
     "NotifyBronzeDQFailure": {
       "Type": "Task",
@@ -1335,11 +1378,9 @@ resource "aws_sfn_state_machine" "batch_pipeline" {
     },
     "Fail": {
       "Type": "Fail",
+      "Comment": "Pipeline failed - loop stops, manual restart required after investigation",
       "Error": "BatchPipelineFailed",
-      "Cause": "Batch pipeline or DQ gate failed"
-    },
-    "Success": {
-      "Type": "Succeed"
+      "Cause": "DQ gate or batch job failed. Check CloudWatch logs, fix the issue, then manually restart the pipeline."
     }
   }
 }
@@ -1384,7 +1425,7 @@ resource "aws_sfn_state_machine" "silver_processing" {
         }
       },
       "ResultPath": "$.jobResult",
-      "TimeoutSeconds": 180,
+      "TimeoutSeconds": 600,
       "Next": "RecordSuccessMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1483,7 +1524,7 @@ resource "aws_sfn_state_machine" "gold_processing" {
         }
       },
       "ResultPath": "$.jobResult",
-      "TimeoutSeconds": 180,
+      "TimeoutSeconds": 600,
       "Next": "RecordSuccessMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -1652,12 +1693,14 @@ EOF
 # 3. Reduce cold start overhead between jobs
 # =============================================================================
 
-# Primary schedule - Unified batch pipeline every 5 minutes
+# Primary schedule - Unified batch pipeline every 15 minutes
+# DISABLED by default - the batch pipeline is self-triggering after first manual start
+# Use this only if you want fixed-interval scheduling instead of completion-based
 resource "aws_cloudwatch_event_rule" "batch_pipeline_schedule" {
   name                = "${local.name_prefix}-batch-pipeline-schedule"
-  description         = "Trigger unified batch pipeline (Silver->DQ->Gold) every 5 minutes for ≤5 min SLA"
-  schedule_expression = "rate(5 minutes)"
-  state               = "DISABLED" # Enable via CLI after deployment
+  description         = "Trigger unified batch pipeline (Bronze DQ->Silver->Silver DQ->Gold->Gold DQ) - backup schedule"
+  schedule_expression = "rate(15 minutes)"
+  state               = "DISABLED"  # Disabled - use continuous loop instead
 }
 
 resource "aws_cloudwatch_event_target" "batch_pipeline_schedule" {
@@ -2051,219 +2094,404 @@ resource "aws_cloudwatch_dashboard" "pipeline" {
   dashboard_name = "${local.name_prefix}-pipeline-dashboard"
 
   dashboard_body = jsonencode({
+    # Set auto-refresh to 1 minute for live monitoring
+    periodOverride = "auto"
+    
     widgets = [
-      # Row 1: Pipeline Health Overview
+      # =================================================================
+      # ROW 0: SUMMARY STATS (Single Value Widgets - Current Status)
+      # =================================================================
       {
         type   = "metric"
         x      = 0
         y      = 0
-        width  = 6
-        height = 6
+        width  = 4
+        height = 4
         properties = {
-          title  = "Bronze Streaming - Records/5min"
-          region = local.region
+          title   = "⚡ Step Functions Today"
+          region  = local.region
+          view    = "singleValue"
+          stacked = false
+          period  = 86400
+          stat    = "Sum"
           metrics = [
-            ["WikiStream/Pipeline", "BronzeRecordsProcessed", "Layer", "bronze", { stat = "Sum", period = 300 }]
+            ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { color = "#2ca02c", label = "Success" }],
+            ["AWS/States", "ExecutionsFailed", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { color = "#d62728", label = "Failed" }]
           ]
-          view  = "timeSeries"
-          yAxis = { left = { min = 0 } }
         }
       },
       {
         type   = "metric"
-        x      = 6
+        x      = 4
         y      = 0
-        width  = 6
-        height = 6
+        width  = 4
+        height = 4
         properties = {
-          title  = "Batch Pipeline Executions"
-          region = local.region
+          title   = "🔄 ECS Producer Status"
+          region  = local.region
+          view    = "singleValue"
+          period  = 60
+          stat    = "Average"
           metrics = [
-            ["WikiStream/Pipeline", "BatchPipelineCompleted", "Pipeline", "batch", { stat = "Sum", period = 300, color = "#2ca02c" }],
-            ["WikiStream/Pipeline", "BatchPipelineStarted", "Pipeline", "batch", { stat = "Sum", period = 300, color = "#1f77b4" }]
+            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { label = "CPU %" }],
+            ["AWS/ECS", "MemoryUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { label = "Mem %" }]
           ]
-          view  = "timeSeries"
-          yAxis = { left = { min = 0 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 8
+        y      = 0
+        width  = 4
+        height = 4
+        properties = {
+          title   = "📊 DQ Gate Status"
+          region  = local.region
+          view    = "singleValue"
+          period  = 3600
+          stat    = "Sum"
+          metrics = [
+            ["WikiStream/DataQuality", "DQGateStatus", "Layer", "bronze", { label = "Bronze", color = "#17becf" }],
+            ["WikiStream/DataQuality", "DQGateStatus", "Layer", "silver", { label = "Silver", color = "#7f7f7f" }],
+            ["WikiStream/DataQuality", "DQGateStatus", "Layer", "gold", { label = "Gold", color = "#ffd700" }]
+          ]
         }
       },
       {
         type   = "metric"
         x      = 12
         y      = 0
-        width  = 6
-        height = 6
+        width  = 4
+        height = 4
         properties = {
-          title  = "Processing Latency (ms)"
-          region = local.region
+          title   = "📬 Kafka Throughput/sec"
+          region  = local.region
+          view    = "singleValue"
+          period  = 60
+          stat    = "Average"
           metrics = [
-            ["WikiStream/Pipeline", "ProcessingLatencyMs", "Layer", "bronze", { stat = "Average", period = 300 }]
+            ["AWS/Kafka", "BytesInPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { label = "In (B/s)" }],
+            ["AWS/Kafka", "BytesOutPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { label = "Out (B/s)" }]
           ]
-          view  = "timeSeries"
+        }
+      },
+      {
+        type   = "alarm"
+        x      = 16
+        y      = 0
+        width  = 8
+        height = 4
+        properties = {
+          title  = "🚨 Active Alarms"
+          alarms = [
+            aws_cloudwatch_metric_alarm.ecs_cpu.arn,
+            aws_cloudwatch_metric_alarm.bronze_health.arn,
+            aws_cloudwatch_metric_alarm.batch_pipeline_failure.arn
+          ]
+        }
+      },
+
+      # =================================================================
+      # ROW 1: STEP FUNCTIONS - Real-time Pipeline Executions
+      # =================================================================
+      {
+        type   = "metric"
+        x      = 0
+        y      = 4
+        width  = 12
+        height = 5
+        properties = {
+          title  = "📈 Batch Pipeline Executions (1-min resolution)"
+          region = local.region
+          view   = "timeSeries"
+          stacked = false
+          period = 60
+          stat   = "Sum"
+          metrics = [
+            ["AWS/States", "ExecutionsStarted", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { color = "#1f77b4", label = "Started" }],
+            ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { color = "#2ca02c", label = "Succeeded" }],
+            ["AWS/States", "ExecutionsFailed", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { color = "#d62728", label = "Failed" }],
+            ["AWS/States", "ExecutionsTimedOut", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { color = "#ff7f0e", label = "Timed Out" }]
+          ]
           yAxis = { left = { min = 0 } }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 4
+        width  = 12
+        height = 5
+        properties = {
+          title  = "⏱️ Pipeline Execution Duration"
+          region = local.region
+          view   = "timeSeries"
+          period = 60
+          stat   = "Average"
+          metrics = [
+            ["AWS/States", "ExecutionTime", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { label = "Avg Duration (ms)", color = "#9467bd" }]
+          ]
+          yAxis = { left = { min = 0, label = "milliseconds" } }
           annotations = {
             horizontal = [
-              { value = 30000, label = "Target: 30s" }
+              { value = 300000, color = "#ff7f0e", label = "5 min target" }
+            ]
+          }
+        }
+      },
+
+      # =================================================================
+      # ROW 2: BRONZE STREAMING + DATA PROCESSING METRICS
+      # =================================================================
+      {
+        type   = "metric"
+        x      = 0
+        y      = 9
+        width  = 8
+        height = 5
+        properties = {
+          title  = "📥 Bronze Records Processed (Streaming)"
+          region = local.region
+          view   = "timeSeries"
+          period = 60
+          stat   = "Sum"
+          metrics = [
+            ["WikiStream/Pipeline", "BronzeRecordsProcessed", "Layer", "bronze", { label = "Records/min", color = "#17becf" }],
+            ["WikiStream/Pipeline", "BronzeBatchCompleted", "Layer", "bronze", { label = "Batches", color = "#2ca02c", yAxis = "right" }]
+          ]
+          yAxis = { 
+            left  = { min = 0, label = "Records" }
+            right = { min = 0, label = "Batches" }
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 8
+        y      = 9
+        width  = 8
+        height = 5
+        properties = {
+          title  = "⏱️ Bronze Processing Latency"
+          region = local.region
+          view   = "timeSeries"
+          period = 60
+          stat   = "Average"
+          metrics = [
+            ["WikiStream/Pipeline", "ProcessingLatencyMs", "Layer", "bronze", { label = "Latency (ms)", color = "#9467bd" }]
+          ]
+          yAxis = { left = { min = 0, label = "milliseconds" } }
+          annotations = {
+            horizontal = [
+              { value = 60000, color = "#ff7f0e", label = "1 min target" }
             ]
           }
         }
       },
       {
         type   = "metric"
-        x      = 18
-        y      = 0
-        width  = 6
-        height = 6
-        properties = {
-          title  = "Data Quality Status"
-          region = local.region
-          metrics = [
-            ["WikiStream/DataQuality", "QualityCheckCompleted", "Layer", "all", { stat = "Sum", period = 300, color = "#2ca02c" }],
-            ["WikiStream/DataQuality", "QualityCheckFailed", "Layer", "all", { stat = "Sum", period = 300, color = "#d62728" }]
-          ]
-          view  = "timeSeries"
-          yAxis = { left = { min = 0 } }
-        }
-      },
-      # Row 2: Layer-specific Metrics
-      {
-        type   = "metric"
-        x      = 0
-        y      = 6
-        width  = 8
-        height = 6
-        properties = {
-          title  = "Silver Processing"
-          region = local.region
-          metrics = [
-            ["WikiStream/Pipeline", "SilverProcessingCompleted", "Layer", "silver", { stat = "Sum", period = 300, color = "#2ca02c" }],
-            ["WikiStream/Pipeline", "SilverProcessingFailed", "Layer", "silver", { stat = "Sum", period = 300, color = "#d62728" }]
-          ]
-          view  = "timeSeries"
-          yAxis = { left = { min = 0 } }
-        }
-      },
-      {
-        type   = "metric"
-        x      = 8
-        y      = 6
-        width  = 8
-        height = 6
-        properties = {
-          title  = "Gold Processing"
-          region = local.region
-          metrics = [
-            ["WikiStream/Pipeline", "GoldProcessingCompleted", "Layer", "gold", { stat = "Sum", period = 300, color = "#2ca02c" }],
-            ["WikiStream/Pipeline", "GoldProcessingFailed", "Layer", "gold", { stat = "Sum", period = 300, color = "#d62728" }]
-          ]
-          view  = "timeSeries"
-          yAxis = { left = { min = 0 } }
-        }
-      },
-      {
-        type   = "metric"
         x      = 16
-        y      = 6
+        y      = 9
         width  = 8
-        height = 6
+        height = 5
         properties = {
-          title  = "Bronze Batch Completions"
+          title  = "✅ DQ Pass Rate by Layer"
           region = local.region
+          view   = "timeSeries"
+          period = 300
+          stat   = "Average"
           metrics = [
-            ["WikiStream/Pipeline", "BronzeBatchCompleted", "Layer", "bronze", { stat = "Sum", period = 300 }]
+            ["WikiStream/DataQuality", "DQPassRate", "Layer", "bronze", { label = "Bronze %", color = "#17becf" }],
+            ["WikiStream/DataQuality", "DQPassRate", "Layer", "silver", { label = "Silver %", color = "#7f7f7f" }],
+            ["WikiStream/DataQuality", "DQPassRate", "Layer", "gold", { label = "Gold %", color = "#ffd700" }]
           ]
-          view  = "timeSeries"
-          yAxis = { left = { min = 0 } }
-        }
-      },
-      # Row 3: Infrastructure Metrics
-      {
-        type   = "metric"
-        x      = 0
-        y      = 12
-        width  = 8
-        height = 6
-        properties = {
-          title  = "ECS Producer - CPU/Memory"
-          region = local.region
-          metrics = [
-            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { stat = "Average", period = 300 }],
-            ["AWS/ECS", "MemoryUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { stat = "Average", period = 300 }]
-          ]
-          view  = "timeSeries"
           yAxis = { left = { min = 0, max = 100 } }
         }
       },
+
+      # =================================================================
+      # ROW 3: DQ GATES STATUS AND FAILURES
+      # =================================================================
+      {
+        type   = "metric"
+        x      = 0
+        y      = 14
+        width  = 8
+        height = 5
+        properties = {
+          title  = "🚦 DQ Gate Pass/Fail (Last Hour)"
+          region = local.region
+          view   = "timeSeries"
+          period = 300
+          stat   = "Sum"
+          metrics = [
+            ["WikiStream/DataQuality", "DQGatePassed", "Layer", "bronze", { label = "Bronze Pass", color = "#2ca02c" }],
+            ["WikiStream/DataQuality", "DQGateFailed", "Layer", "bronze", { label = "Bronze Fail", color = "#d62728" }],
+            ["WikiStream/DataQuality", "DQGatePassed", "Layer", "silver", { label = "Silver Pass", color = "#7f7f7f" }],
+            ["WikiStream/DataQuality", "DQGateFailed", "Layer", "silver", { label = "Silver Fail", color = "#ff7f0e" }],
+            ["WikiStream/DataQuality", "DQGatePassed", "Layer", "gold", { label = "Gold Pass", color = "#ffd700" }],
+            ["WikiStream/DataQuality", "DQGateFailed", "Layer", "gold", { label = "Gold Fail", color = "#9467bd" }]
+          ]
+          yAxis = { left = { min = 0 } }
+        }
+      },
       {
         type   = "metric"
         x      = 8
-        y      = 12
+        y      = 14
         width  = 8
-        height = 6
+        height = 5
         properties = {
-          title  = "MSK - Bytes In/Out"
+          title  = "🔍 DQ Check Execution Time"
           region = local.region
+          view   = "timeSeries"
+          period = 300
+          stat   = "Average"
           metrics = [
-            ["AWS/Kafka", "BytesInPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { stat = "Average", period = 300 }],
-            ["AWS/Kafka", "BytesOutPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { stat = "Average", period = 300 }]
+            ["WikiStream/DataQuality", "DQCheckDurationMs", "Layer", "bronze", { label = "Bronze", color = "#17becf" }],
+            ["WikiStream/DataQuality", "DQCheckDurationMs", "Layer", "silver", { label = "Silver", color = "#7f7f7f" }],
+            ["WikiStream/DataQuality", "DQCheckDurationMs", "Layer", "gold", { label = "Gold", color = "#ffd700" }]
           ]
-          view  = "timeSeries"
-          yAxis = { left = { min = 0 } }
+          yAxis = { left = { min = 0, label = "milliseconds" } }
         }
       },
       {
         type   = "metric"
         x      = 16
-        y      = 12
+        y      = 14
         width  = 8
-        height = 6
+        height = 5
         properties = {
-          title  = "Step Functions Executions"
+          title  = "📉 DQ Failures by Check Type"
           region = local.region
+          view   = "timeSeries"
+          period = 300
+          stat   = "Sum"
           metrics = [
-            ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { stat = "Sum", period = 300, color = "#2ca02c" }],
-            ["AWS/States", "ExecutionsFailed", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { stat = "Sum", period = 300, color = "#d62728" }],
-            ["AWS/States", "ExecutionsStarted", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { stat = "Sum", period = 300, color = "#1f77b4" }]
+            ["WikiStream/DataQuality", "DQCheckStatus", "CheckType", "completeness", "Layer", "bronze", { label = "Completeness", color = "#d62728" }],
+            ["WikiStream/DataQuality", "DQCheckStatus", "CheckType", "validity", "Layer", "bronze", { label = "Validity", color = "#ff7f0e" }],
+            ["WikiStream/DataQuality", "DQCheckStatus", "CheckType", "timeliness", "Layer", "bronze", { label = "Timeliness", color = "#9467bd" }],
+            ["WikiStream/DataQuality", "DQCheckStatus", "CheckType", "uniqueness", "Layer", "bronze", { label = "Uniqueness", color = "#1f77b4" }]
           ]
-          view  = "timeSeries"
           yAxis = { left = { min = 0 } }
         }
       },
-      # Row 4: Alerts and Text
+
+      # =================================================================
+      # ROW 4: INFRASTRUCTURE - ECS, MSK, EMR
+      # =================================================================
+      {
+        type   = "metric"
+        x      = 0
+        y      = 19
+        width  = 8
+        height = 5
+        properties = {
+          title  = "🐳 ECS Producer Health"
+          region = local.region
+          view   = "timeSeries"
+          period = 60
+          metrics = [
+            ["AWS/ECS", "CPUUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { stat = "Average", color = "#1f77b4", label = "CPU %" }],
+            ["AWS/ECS", "MemoryUtilization", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { stat = "Average", color = "#ff7f0e", label = "Memory %" }],
+            ["AWS/ECS", "RunningTaskCount", "ClusterName", aws_ecs_cluster.main.name, "ServiceName", aws_ecs_service.producer.name, { stat = "Average", color = "#2ca02c", label = "Tasks", yAxis = "right" }]
+          ]
+          yAxis = { 
+            left  = { min = 0, max = 100, label = "Percent" }
+            right = { min = 0, max = 5, label = "Count" }
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 8
+        y      = 19
+        width  = 8
+        height = 5
+        properties = {
+          title  = "📨 MSK Kafka Throughput"
+          region = local.region
+          view   = "timeSeries"
+          period = 60
+          stat   = "Average"
+          metrics = [
+            ["AWS/Kafka", "BytesInPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { color = "#2ca02c", label = "Bytes In/s" }],
+            ["AWS/Kafka", "BytesOutPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { color = "#1f77b4", label = "Bytes Out/s" }],
+            ["AWS/Kafka", "MessagesInPerSec", "Cluster Name", aws_msk_cluster.wikistream.cluster_name, { color = "#ff7f0e", label = "Msgs/s", yAxis = "right" }]
+          ]
+          yAxis = { 
+            left  = { min = 0, label = "Bytes/sec" }
+            right = { min = 0, label = "Messages/sec" }
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 16
+        y      = 19
+        width  = 8
+        height = 5
+        properties = {
+          title  = "⚡ EMR Serverless Application"
+          region = local.region
+          view   = "timeSeries"
+          period = 60
+          stat   = "Sum"
+          metrics = [
+            ["AWS/EMRServerless", "RunningWorkers", "ApplicationId", aws_emrserverless_application.spark.id, { color = "#2ca02c", label = "Running Workers" }],
+            ["AWS/EMRServerless", "IdleWorkers", "ApplicationId", aws_emrserverless_application.spark.id, { color = "#7f7f7f", label = "Idle Workers" }]
+          ]
+          yAxis = { left = { min = 0 } }
+        }
+      },
+
+      # =================================================================
+      # ROW 5: INFO AND LINKS
+      # =================================================================
       {
         type   = "text"
         x      = 0
-        y      = 18
+        y      = 24
         width  = 12
-        height = 3
+        height = 5
         properties = {
           markdown = <<-EOF
-## WikiStream Pipeline Health
+## 📊 WikiStream Pipeline SLA Targets
 
-**SLA Target:** Analytics dashboards reflect new edits within ≤5 minutes
+| Layer | Target Latency | Target Pass Rate |
+|-------|----------------|------------------|
+| Bronze (Streaming) | ≤3 min P95 | 99% |
+| Silver (Batch) | ≤2 min | 100% |
+| Gold (Batch) | ≤2 min | 100% |
+| **End-to-End** | **≤5 min** | **100%** |
 
-**Architecture:**
-- **Bronze (Streaming):** Kafka → Spark Streaming → Iceberg (30s micro-batches)
-- **Batch Pipeline:** Silver → Data Quality → Gold (runs every 5 minutes)
-- **EMR Serverless:** Optimized for 32 vCPU quota, jobs run sequentially
+**Architecture:** Producer → Kafka → Bronze → DQ → Silver → DQ → Gold → DQ
 
 **Quick Links:**
-- [EMR Serverless Console](https://${local.region}.console.aws.amazon.com/emr/home?region=${local.region}#/serverless/applications/${aws_emrserverless_application.spark.id})
-- [Step Functions](https://${local.region}.console.aws.amazon.com/states/home?region=${local.region}#/statemachines)
+- [EMR Serverless](https://${local.region}.console.aws.amazon.com/emr/home?region=${local.region}#/serverless/applications/${aws_emrserverless_application.spark.id})
+- [Step Functions](https://${local.region}.console.aws.amazon.com/states/home?region=${local.region}#/statemachines/view/${aws_sfn_state_machine.batch_pipeline.arn})
+- [S3 Tables](https://${local.region}.console.aws.amazon.com/s3tables/home?region=${local.region})
+- [CloudWatch Logs](https://${local.region}.console.aws.amazon.com/cloudwatch/home?region=${local.region}#logsV2:log-groups/log-group/$252Faws$252Femr-serverless$252F${local.name_prefix})
 EOF
         }
       },
       {
-        type   = "alarm"
+        type   = "metric"
         x      = 12
-        y      = 18
+        y      = 24
         width  = 12
-        height = 3
+        height = 5
         properties = {
-          title = "Active Alarms"
-          alarms = [
-            aws_cloudwatch_metric_alarm.ecs_cpu.arn,
-            aws_cloudwatch_metric_alarm.bronze_health.arn
+          title  = "📈 Pipeline Activity (Last 3 Hours)"
+          region = local.region
+          view   = "bar"
+          period = 300
+          stat   = "Sum"
+          metrics = [
+            ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { color = "#2ca02c", label = "Success" }],
+            ["AWS/States", "ExecutionsFailed", "StateMachineArn", aws_sfn_state_machine.batch_pipeline.arn, { color = "#d62728", label = "Failed" }]
           ]
+          yAxis = { left = { min = 0 } }
         }
       }
     ]

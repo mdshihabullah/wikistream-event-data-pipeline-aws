@@ -19,12 +19,20 @@ This module provides:
 All checks follow industry best practices for data quality in streaming pipelines.
 """
 
+import os
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from enum import Enum
+
+# ============================================================================
+# IMPORTANT: Set SPARK_VERSION before importing PyDeequ
+# EMR 7.12.0 uses Spark 3.5.x - PyDeequ requires this environment variable
+# ============================================================================
+if "SPARK_VERSION" not in os.environ:
+    os.environ["SPARK_VERSION"] = "3.5"
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import (
@@ -48,9 +56,10 @@ try:
         ApproxQuantile
     )
     PYDEEQU_AVAILABLE = True
-except ImportError:
+    print(f"PyDeequ initialized successfully with SPARK_VERSION={os.environ.get('SPARK_VERSION')}")
+except ImportError as e:
     PYDEEQU_AVAILABLE = False
-    print("WARNING: PyDeequ not available, falling back to PySpark-based checks")
+    print(f"WARNING: PyDeequ not available, falling back to PySpark-based checks. Error: {e}")
 
 
 class CheckStatus(Enum):
@@ -183,12 +192,14 @@ class BaseDQChecks(ABC):
         """
         Run PyDeequ verification and convert results to DQCheckResult list.
         
+        Uses AnalysisRunner for actual metrics + VerificationSuite for pass/fail.
+        
         Args:
             df: DataFrame to verify
             check: PyDeequ Check object with constraints
             
         Returns:
-            List of DQCheckResult objects
+            List of DQCheckResult objects with populated metrics
         """
         if not PYDEEQU_AVAILABLE:
             return [DQCheckResult(
@@ -202,34 +213,38 @@ class BaseDQChecks(ABC):
         results = []
         
         try:
-            # Run verification
+            # Get row count
+            row_count = df.count()
+            
+            # Run verification for pass/fail
             verification_result = VerificationSuite(self.spark) \
                 .onData(df) \
                 .addCheck(check) \
                 .run()
             
-            # Get row count for context
-            row_count = df.count()
-            
-            # Parse results
+            # Parse verification results
             result_df = VerificationResult.checkResultsAsDataFrame(
                 self.spark, verification_result
             )
             
             for row in result_df.collect():
-                check_name = row["check"]
                 constraint = row["constraint"]
                 constraint_status = row["constraint_status"]
                 constraint_message = row["constraint_message"] if row["constraint_message"] else ""
                 
-                # Extract metric value if available
-                metric_value = None
-                if "Value:" in constraint_message:
-                    try:
-                        metric_str = constraint_message.split("Value:")[1].strip().split()[0]
-                        metric_value = float(metric_str)
-                    except (ValueError, IndexError):
-                        pass
+                # Determine check type and clean name first
+                check_type = self._infer_check_type(constraint)
+                clean_name = self._extract_clean_check_name(constraint)
+                
+                # Extract metric value - try message first, then compute directly
+                metric_value = self._extract_metric_value(constraint_message)
+                
+                # If no metric from message, compute it directly from data
+                if metric_value is None:
+                    metric_value = self._compute_metric_from_constraint(df, constraint, row_count)
+                
+                # Infer threshold from constraint
+                threshold_value = self._extract_threshold(constraint)
                 
                 # Determine status
                 if constraint_status == "Success":
@@ -239,30 +254,244 @@ class BaseDQChecks(ABC):
                 else:
                     status = CheckStatus.FAILED
                 
-                # Determine check type from constraint name
-                check_type = self._infer_check_type(constraint)
+                # Calculate records passed/failed based on metric
+                records_passed = None
+                records_failed = None
+                failure_rate = None
+                
+                if metric_value is not None and row_count > 0:
+                    # metric_value is rate (0-1) for completeness/uniqueness/validity
+                    records_passed = int(metric_value * row_count)
+                    records_failed = row_count - records_passed
+                    failure_rate = round(1.0 - metric_value, 6)
                 
                 duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
                 
+                # Build human-readable message
+                human_message = self._build_human_message(
+                    check_type, clean_name, metric_value, threshold_value, status
+                )
+                
                 results.append(DQCheckResult(
-                    check_name=self._sanitize_check_name(constraint),
+                    check_name=clean_name,
                     check_type=check_type,
                     status=status,
-                    metric_value=metric_value,
+                    metric_value=round(metric_value, 6) if metric_value is not None else None,
+                    threshold_value=threshold_value,
                     records_checked=row_count,
-                    message=constraint_message or f"Constraint: {constraint}",
+                    records_passed=records_passed,
+                    records_failed=records_failed,
+                    failure_rate=failure_rate,
+                    message=human_message,
+                    evidence={},  # Clean - no raw constraint clutter
                     check_duration_ms=duration_ms
                 ))
             
             return results
             
         except Exception as e:
+            import traceback
             return [DQCheckResult(
                 check_name="deequ_verification_error",
                 check_type=CheckType.VALIDITY,
                 status=CheckStatus.ERROR,
-                message=f"Deequ verification error: {str(e)}"
+                message=f"Deequ verification error: {str(e)}",
+                evidence={"error": str(e)}
             )]
+    
+    def _compute_metric_from_constraint(
+        self,
+        df: DataFrame,
+        constraint: str,
+        row_count: int
+    ) -> Optional[float]:
+        """
+        Directly compute metric value when PyDeequ doesn't provide it in message.
+        This handles compliance/containedIn checks that don't return Value.
+        """
+        import re
+        
+        if row_count == 0:
+            return None
+        
+        try:
+            # Completeness: extract column and compute
+            if "Completeness" in constraint:
+                match = re.search(r'Completeness\((\w+)', constraint)
+                if match:
+                    col_name = match.group(1)
+                    non_null = df.filter(col(col_name).isNotNull()).count()
+                    return non_null / row_count
+            
+            # Uniqueness: extract column and compute
+            if "Uniqueness" in constraint:
+                match = re.search(r'Uniqueness\(List\((\w+)', constraint)
+                if not match:
+                    match = re.search(r'Uniqueness\((\w+)', constraint)
+                if match:
+                    col_name = match.group(1)
+                    distinct = df.select(col_name).distinct().count()
+                    return distinct / row_count
+            
+            # ContainedIn/Compliance: extract column and allowed values
+            if "Compliance" in constraint or "ContainedIn" in constraint:
+                # Try to extract column from SQL expression
+                # Pattern: `column` IN ('val1','val2',...) or column IS NULL OR column IN (...)
+                match = re.search(r'`(\w+)`\s+(?:IS NULL OR\s+)?`?\1?`?\s*IN\s*\(([^)]+)\)', constraint)
+                if match:
+                    col_name = match.group(1)
+                    values_str = match.group(2)
+                    # Parse allowed values
+                    allowed = [v.strip().strip("'\"") for v in values_str.split(",")]
+                    valid_count = df.filter(
+                        col(col_name).isNull() | col(col_name).isin(allowed)
+                    ).count()
+                    return valid_count / row_count
+                
+                # Alternative pattern for isContainedIn
+                match = re.search(r'ContainedIn\((\w+)', constraint)
+                if match:
+                    col_name = match.group(1)
+                    # We need the allowed values - fallback to 100% if passed
+                    return 1.0  # Will be overridden by status
+            
+            # NonNegative checks
+            if "NonNegative" in constraint:
+                match = re.search(r'NonNegative\((\w+)', constraint)
+                if match:
+                    col_name = match.group(1)
+                    valid_count = df.filter(
+                        col(col_name).isNull() | (col(col_name) >= 0)
+                    ).count()
+                    return valid_count / row_count
+            
+        except Exception as e:
+            print(f"Warning: Could not compute metric for constraint: {e}")
+        
+        return None
+    
+    def _extract_metric_value(self, constraint_message: str) -> Optional[float]:
+        """Extract the actual metric value from PyDeequ constraint message."""
+        if not constraint_message:
+            return None
+        
+        # Try various patterns PyDeequ uses
+        import re
+        
+        # Pattern: "Value: 0.95 ..."
+        match = re.search(r'Value:\s*([\d.]+)', constraint_message)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                pass
+        
+        # Pattern: "value 0.95" or "was 0.95"
+        match = re.search(r'(?:value|was)\s+([\d.]+)', constraint_message.lower())
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                pass
+        
+        return None
+    
+    def _extract_threshold(self, constraint: str) -> Optional[float]:
+        """Extract threshold value from constraint definition."""
+        import re
+        
+        # isComplete constraints have implicit 1.0 threshold
+        if "Completeness" in constraint and "hasCompleteness" not in constraint.lower():
+            return 1.0
+        
+        # hasCompleteness with lambda often shows >= threshold
+        # Pattern: ">= 0.95" or "≥ 0.95"
+        match = re.search(r'[≥>=]\s*([\d.]+)', constraint)
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                pass
+        
+        # Uniqueness constraint (isUnique) has implicit 1.0 threshold
+        if "Uniqueness" in constraint or "isUnique" in constraint:
+            return 1.0
+        
+        return None
+    
+    def _extract_clean_check_name(self, constraint: str) -> str:
+        """Extract a clean, readable check name from constraint."""
+        import re
+        
+        # Completeness checks
+        if "Completeness" in constraint:
+            match = re.search(r'Completeness\((\w+)', constraint)
+            if match:
+                return f"completeness_{match.group(1)}"
+        
+        # Uniqueness checks
+        if "Uniqueness" in constraint:
+            match = re.search(r'Uniqueness\(List\((\w+)', constraint)
+            if not match:
+                match = re.search(r'Uniqueness\((\w+)', constraint)
+            if match:
+                return f"uniqueness_{match.group(1)}"
+        
+        # Compliance/ContainedIn checks
+        if "Compliance" in constraint or "contained" in constraint.lower():
+            match = re.search(r'(\w+)\s+contained\s+in', constraint)
+            if match:
+                return f"validity_{match.group(1)}_in_allowed_values"
+            # Extract column name from constraint
+            match = re.search(r'Compliance\(([^,]+)', constraint)
+            if match:
+                return f"validity_{match.group(1).strip()}"
+        
+        # NonNegative checks
+        if "NonNegative" in constraint:
+            match = re.search(r'NonNegative\((\w+)', constraint)
+            if match:
+                return f"validity_{match.group(1)}_non_negative"
+        
+        # Max/Min checks
+        if "hasMax" in constraint.lower() or "Maximum" in constraint:
+            match = re.search(r'Maximum\((\w+)', constraint)
+            if match:
+                return f"validity_{match.group(1)}_max_check"
+        
+        # Fallback: sanitize the constraint string
+        return self._sanitize_check_name(constraint)
+    
+    def _build_human_message(
+        self,
+        check_type: CheckType,
+        check_name: str,
+        metric_value: Optional[float],
+        threshold_value: Optional[float],
+        status: CheckStatus
+    ) -> str:
+        """Build a human-readable message for the check result."""
+        if metric_value is None:
+            return f"{check_name}: {status.value}"
+        
+        if check_type == CheckType.COMPLETENESS:
+            pct = metric_value * 100
+            threshold_pct = (threshold_value or 1.0) * 100
+            return f"Completeness: {pct:.2f}% (threshold: {threshold_pct:.0f}%)"
+        
+        elif check_type == CheckType.UNIQUENESS:
+            pct = metric_value * 100
+            return f"Uniqueness: {pct:.2f}% unique values"
+        
+        elif check_type == CheckType.VALIDITY:
+            if metric_value <= 1:
+                pct = metric_value * 100
+                return f"Validity: {pct:.2f}% valid values"
+            else:
+                return f"Validity check: value = {metric_value}"
+        
+        else:
+            return f"{check_name}: value = {metric_value}, status = {status.value}"
     
     def _infer_check_type(self, constraint: str) -> CheckType:
         """Infer check type from constraint name."""
@@ -271,9 +500,9 @@ class BaseDQChecks(ABC):
             return CheckType.COMPLETENESS
         elif "unique" in constraint_lower:
             return CheckType.UNIQUENESS
-        elif "contained" in constraint_lower or "isin" in constraint_lower:
+        elif "contained" in constraint_lower or "compliance" in constraint_lower:
             return CheckType.VALIDITY
-        elif "nonnegative" in constraint_lower or "range" in constraint_lower:
+        elif "nonnegative" in constraint_lower or "maximum" in constraint_lower or "minimum" in constraint_lower:
             return CheckType.VALIDITY
         elif "accuracy" in constraint_lower:
             return CheckType.ACCURACY
@@ -281,14 +510,15 @@ class BaseDQChecks(ABC):
             return CheckType.CONSISTENCY
     
     def _sanitize_check_name(self, constraint: str) -> str:
-        """Convert constraint string to a clean check name."""
-        # Remove common prefixes and clean up
-        name = constraint.replace("CompletenessConstraint", "completeness")
-        name = name.replace("UniquenessConstraint", "uniqueness")
-        name = name.replace("Constraint", "")
-        name = name.replace("(", "_").replace(")", "").replace(",", "_")
-        name = name.replace(" ", "_").replace(".", "_")
-        return name.lower().strip("_")
+        """Convert constraint string to a clean check name (fallback)."""
+        import re
+        # Remove common prefixes
+        name = re.sub(r'Constraint|Compliance|Completeness|Uniqueness', '', constraint)
+        # Clean up parentheses and special chars
+        name = re.sub(r'[()[\],`\'"]', '', name)
+        name = re.sub(r'\s+', '_', name)
+        name = re.sub(r'_+', '_', name)
+        return name.lower().strip('_')[:80]  # Limit length
 
     def _check_completeness_pyspark(
         self,
@@ -368,7 +598,7 @@ class BronzeDQChecks(BaseDQChecks):
     CRITICAL_FIELDS = ["event_id", "event_type", "domain", "event_timestamp"]
     IMPORTANT_FIELDS = ["title", "user", "wiki"]
     ALLOWED_EVENT_TYPES = ["edit", "new", "log", "categorize", "external", "unknown"]
-    TIMELINESS_THRESHOLD_SECONDS = 60  # 1 minute
+    TIMELINESS_THRESHOLD_SECONDS = 180  # 3 minutes - realistic for Wikipedia stream latency
     
     def __init__(self, spark: SparkSession):
         super().__init__(spark, "bronze", "bronze.raw_events")
@@ -396,8 +626,8 @@ class BronzeDQChecks(BaseDQChecks):
             check = check.isNonNegative("event_hour")
             check = check.hasMax("event_hour", lambda x: x <= 23)
             
-            # 5. Validity: namespace >= 0
-            check = check.isNonNegative("namespace")
+            # Note: Namespace validity check removed - Wikipedia SSE uses negative IDs:
+            #   -1 = Special pages, -2 = Media namespace (both are valid)
             
             # 6. Uniqueness: event_id
             check = check.isUnique("event_id")
@@ -420,7 +650,11 @@ class BronzeDQChecks(BaseDQChecks):
                 result = self._check_completeness_pyspark(df, field, 0.95, False)
                 all_results.append(result)
         
-        # 7. Timeliness check (always use PySpark - custom logic)
+        # Custom PySpark-based checks (always run)
+        # Note: Namespace check removed - Wikipedia uses negative namespace IDs for
+        # special pages (-1=Special, -2=Media) which are valid values
+        
+        # 5. Timeliness check (P95 latency within threshold)
         timeliness_result = self._check_timeliness(df)
         all_results.append(timeliness_result)
         

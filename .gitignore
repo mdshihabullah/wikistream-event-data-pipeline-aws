@@ -9,13 +9,14 @@
 *.tfvars
 !*.tfvars.example
 .terraform.tfplan
+*.tfplan
 crash.log
 crash.*.log
 terraform-provider-*
 override.tf
 override.tf.json
 tfplan
-
+outputs.json
 # ============================================================================
 # IDE AND EDITOR FILES
 # ============================================================================

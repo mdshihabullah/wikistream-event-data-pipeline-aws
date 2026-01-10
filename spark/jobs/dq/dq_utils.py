@@ -147,7 +147,7 @@ class DQAuditWriter:
             TBLPROPERTIES (
                 'write.format.default' = 'parquet',
                 'write.parquet.compression-codec' = 'zstd',
-                'format-version' = '3'
+                'format-version' = '2'
             )
         """)
     
@@ -298,7 +298,7 @@ class DataProfiler:
             TBLPROPERTIES (
                 'write.format.default' = 'parquet',
                 'write.parquet.compression-codec' = 'zstd',
-                'format-version' = '3'
+                'format-version' = '2'
             )
         """)
     

@@ -6,8 +6,9 @@ Reads from Silver table, computes aggregations and risk scores for Gold layer.
 
 This job runs on EMR Serverless, triggered by Step Functions on schedule.
 Produces tables optimized for QuickSight dashboards:
-  - gold.hourly_stats: Hourly metrics by domain
+  - gold.hourly_stats: Hourly metrics by domain/region
   - gold.risk_scores: Entity-level risk scores with evidence
+  - gold.daily_analytics_summary: Executive dashboard with KPIs and trends
 """
 
 import sys
@@ -248,6 +249,159 @@ def compute_risk_scores(spark, start_date: str, end_date: str):
     return risk_df
 
 
+def compute_daily_analytics_summary(spark, start_date: str, end_date: str):
+    """
+    Compute daily executive summary with KPIs, risk overview, and trends.
+    
+    This single-row-per-day table provides:
+    - Platform health overview
+    - Risk distribution metrics
+    - Content quality indicators
+    - Activity trends for dashboards
+    """
+    print("Computing daily analytics summary...")
+    
+    summary_df = spark.sql(f"""
+        WITH daily_base AS (
+            SELECT
+                event_date,
+                COUNT(*) AS total_events,
+                COUNT(DISTINCT user_normalized) AS unique_users,
+                COUNT(DISTINCT domain) AS active_domains,
+                COUNT(DISTINCT title) AS unique_pages_edited,
+                
+                -- User segmentation
+                SUM(CASE WHEN is_bot = true THEN 1 ELSE 0 END) AS bot_events,
+                SUM(CASE WHEN is_anonymous = true THEN 1 ELSE 0 END) AS anonymous_events,
+                SUM(CASE WHEN is_bot = false AND is_anonymous = false THEN 1 ELSE 0 END) AS registered_user_events,
+                
+                -- Content metrics
+                SUM(CASE WHEN length_delta > 0 THEN length_delta ELSE 0 END) AS total_bytes_added,
+                SUM(CASE WHEN length_delta < 0 THEN ABS(length_delta) ELSE 0 END) AS total_bytes_removed,
+                AVG(ABS(COALESCE(length_delta, 0))) AS avg_edit_size_bytes,
+                
+                -- Edit type breakdown
+                SUM(CASE WHEN event_type = 'edit' THEN 1 ELSE 0 END) AS edit_events,
+                SUM(CASE WHEN event_type = 'new' THEN 1 ELSE 0 END) AS new_page_events,
+                
+                -- Quality flags
+                SUM(CASE WHEN is_large_deletion = true THEN 1 ELSE 0 END) AS large_deletions_count,
+                SUM(CASE WHEN is_large_addition = true THEN 1 ELSE 0 END) AS large_additions_count,
+                
+                -- Regional distribution
+                SUM(CASE WHEN region = 'europe' THEN 1 ELSE 0 END) AS europe_events,
+                SUM(CASE WHEN region = 'americas' THEN 1 ELSE 0 END) AS americas_events,
+                SUM(CASE WHEN region = 'asia_pacific' THEN 1 ELSE 0 END) AS asia_pacific_events,
+                
+                -- Peak hour activity
+                MAX(hour_events) AS peak_hour_events
+            FROM (
+                SELECT 
+                    event_date,
+                    user_normalized,
+                    domain,
+                    title,
+                    is_bot,
+                    is_anonymous,
+                    length_delta,
+                    event_type,
+                    is_large_deletion,
+                    is_large_addition,
+                    region,
+                    COUNT(*) OVER (PARTITION BY event_date, HOUR(event_timestamp)) AS hour_events
+                FROM s3tablesbucket.silver.cleaned_events
+                WHERE event_date >= '{start_date}' AND event_date <= '{end_date}'
+            )
+            GROUP BY event_date
+        ),
+        risk_summary AS (
+            SELECT
+                stat_date,
+                COUNT(*) AS total_scored_users,
+                SUM(CASE WHEN risk_level = 'HIGH' THEN 1 ELSE 0 END) AS high_risk_users,
+                SUM(CASE WHEN risk_level = 'MEDIUM' THEN 1 ELSE 0 END) AS medium_risk_users,
+                SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) AS low_risk_users,
+                AVG(risk_score) AS avg_risk_score,
+                MAX(risk_score) AS max_risk_score,
+                SUM(CASE WHEN alert_triggered = true THEN 1 ELSE 0 END) AS alerts_triggered
+            FROM s3tablesbucket.gold.risk_scores
+            WHERE stat_date >= '{start_date}' AND stat_date <= '{end_date}'
+            GROUP BY stat_date
+        )
+        SELECT
+            d.event_date AS summary_date,
+            
+            -- Volume KPIs
+            d.total_events,
+            d.unique_users,
+            d.active_domains,
+            d.unique_pages_edited,
+            
+            -- User Mix (percentages)
+            ROUND(100.0 * d.bot_events / NULLIF(d.total_events, 0), 2) AS bot_percentage,
+            ROUND(100.0 * d.anonymous_events / NULLIF(d.total_events, 0), 2) AS anonymous_percentage,
+            ROUND(100.0 * d.registered_user_events / NULLIF(d.total_events, 0), 2) AS registered_user_percentage,
+            
+            -- Content Health
+            d.total_bytes_added,
+            d.total_bytes_removed,
+            d.total_bytes_added - d.total_bytes_removed AS net_content_change,
+            ROUND(d.avg_edit_size_bytes, 2) AS avg_edit_size_bytes,
+            d.new_page_events AS new_pages_created,
+            
+            -- Quality Indicators
+            d.large_deletions_count,
+            d.large_additions_count,
+            ROUND(100.0 * d.large_deletions_count / NULLIF(d.total_events, 0), 4) AS large_deletion_rate,
+            
+            -- Risk Overview
+            COALESCE(r.high_risk_users, 0) AS high_risk_user_count,
+            COALESCE(r.medium_risk_users, 0) AS medium_risk_user_count,
+            COALESCE(r.low_risk_users, 0) AS low_risk_user_count,
+            COALESCE(r.avg_risk_score, 0) AS platform_avg_risk_score,
+            COALESCE(r.max_risk_score, 0) AS platform_max_risk_score,
+            COALESCE(r.alerts_triggered, 0) AS total_alerts_triggered,
+            
+            -- Regional Distribution (percentages)
+            ROUND(100.0 * d.europe_events / NULLIF(d.total_events, 0), 2) AS europe_percentage,
+            ROUND(100.0 * d.americas_events / NULLIF(d.total_events, 0), 2) AS americas_percentage,
+            ROUND(100.0 * d.asia_pacific_events / NULLIF(d.total_events, 0), 2) AS asia_pacific_percentage,
+            
+            -- Activity Pattern
+            d.peak_hour_events,
+            ROUND(d.total_events / 24.0, 2) AS avg_events_per_hour,
+            
+            -- Health Score (0-100): Higher is better
+            -- Based on: low risk ratio, registered user ratio, content growth
+            ROUND(LEAST(100, GREATEST(0,
+                -- Low risk user bonus (0-40)
+                40 * COALESCE(r.low_risk_users, 0) / NULLIF(COALESCE(r.total_scored_users, 1), 0)
+                -- Registered user bonus (0-30)
+                + 30 * d.registered_user_events / NULLIF(d.total_events, 1)
+                -- Content growth bonus (0-20)
+                + CASE 
+                    WHEN d.total_bytes_added > d.total_bytes_removed THEN 20
+                    WHEN d.total_bytes_added > d.total_bytes_removed * 0.5 THEN 10
+                    ELSE 0
+                END
+                -- Low deletion rate bonus (0-10)
+                + CASE 
+                    WHEN d.large_deletions_count < d.total_events * 0.01 THEN 10
+                    WHEN d.large_deletions_count < d.total_events * 0.05 THEN 5
+                    ELSE 0
+                END
+            )), 2) AS platform_health_score,
+            
+            CURRENT_TIMESTAMP() AS gold_processed_at,
+            '{SCHEMA_VERSION}' AS schema_version
+            
+        FROM daily_base d
+        LEFT JOIN risk_summary r ON d.event_date = r.stat_date
+    """)
+    
+    return summary_df
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -319,7 +473,7 @@ def main():
             'write.format.default' = 'parquet',
             'write.parquet.compression-codec' = 'zstd',
             'write.target-file-size-bytes' = '268435456',
-            'format-version' = '3',
+            'format-version' = '2',
             'write.merge.mode' = 'merge-on-read',
             'write.delete.mode' = 'merge-on-read',
             'write.update.mode' = 'merge-on-read'
@@ -349,7 +503,71 @@ def main():
             'write.format.default' = 'parquet',
             'write.parquet.compression-codec' = 'zstd',
             'write.target-file-size-bytes' = '268435456',
-            'format-version' = '3',
+            'format-version' = '2',
+            'write.merge.mode' = 'merge-on-read',
+            'write.delete.mode' = 'merge-on-read',
+            'write.update.mode' = 'merge-on-read'
+        )
+    """)
+    
+    # Daily analytics summary table - Executive dashboard KPIs
+    spark.sql("""
+        CREATE TABLE IF NOT EXISTS s3tablesbucket.gold.daily_analytics_summary (
+            summary_date STRING NOT NULL,
+            
+            -- Volume KPIs
+            total_events BIGINT,
+            unique_users BIGINT,
+            active_domains BIGINT,
+            unique_pages_edited BIGINT,
+            
+            -- User Mix (percentages)
+            bot_percentage DOUBLE,
+            anonymous_percentage DOUBLE,
+            registered_user_percentage DOUBLE,
+            
+            -- Content Health
+            total_bytes_added BIGINT,
+            total_bytes_removed BIGINT,
+            net_content_change BIGINT,
+            avg_edit_size_bytes DOUBLE,
+            new_pages_created BIGINT,
+            
+            -- Quality Indicators
+            large_deletions_count BIGINT,
+            large_additions_count BIGINT,
+            large_deletion_rate DOUBLE,
+            
+            -- Risk Overview
+            high_risk_user_count BIGINT,
+            medium_risk_user_count BIGINT,
+            low_risk_user_count BIGINT,
+            platform_avg_risk_score DOUBLE,
+            platform_max_risk_score DOUBLE,
+            total_alerts_triggered BIGINT,
+            
+            -- Regional Distribution
+            europe_percentage DOUBLE,
+            americas_percentage DOUBLE,
+            asia_pacific_percentage DOUBLE,
+            
+            -- Activity Pattern
+            peak_hour_events BIGINT,
+            avg_events_per_hour DOUBLE,
+            
+            -- Overall Health
+            platform_health_score DOUBLE,
+            
+            gold_processed_at TIMESTAMP,
+            schema_version STRING
+        )
+        USING iceberg
+        PARTITIONED BY (summary_date)
+        TBLPROPERTIES (
+            'write.format.default' = 'parquet',
+            'write.parquet.compression-codec' = 'zstd',
+            'write.target-file-size-bytes' = '268435456',
+            'format-version' = '2',
             'write.merge.mode' = 'merge-on-read',
             'write.delete.mode' = 'merge-on-read',
             'write.update.mode' = 'merge-on-read'
@@ -444,6 +662,68 @@ def main():
             WHEN NOT MATCHED THEN INSERT *
         """)
         print(f"Merged risk scores")
+    
+    # Compute and write daily analytics summary (after risk scores are available)
+    summary_df = compute_daily_analytics_summary(spark, start_date, end_date)
+    summary_df.createOrReplaceTempView("incoming_summary")
+    
+    summary_count = spark.sql("SELECT COUNT(*) FROM incoming_summary").collect()[0][0]
+    print(f"Incoming daily summaries: {summary_count}")
+    
+    if summary_count > 0:
+        spark.sql("""
+            MERGE INTO s3tablesbucket.gold.daily_analytics_summary AS target
+            USING incoming_summary AS source
+            ON target.summary_date = source.summary_date
+            WHEN MATCHED THEN UPDATE SET
+                target.summary_date = source.summary_date,
+                target.total_events = source.total_events,
+                target.unique_users = source.unique_users,
+                target.active_domains = source.active_domains,
+                target.unique_pages_edited = source.unique_pages_edited,
+                target.bot_percentage = source.bot_percentage,
+                target.anonymous_percentage = source.anonymous_percentage,
+                target.registered_user_percentage = source.registered_user_percentage,
+                target.total_bytes_added = source.total_bytes_added,
+                target.total_bytes_removed = source.total_bytes_removed,
+                target.net_content_change = source.net_content_change,
+                target.avg_edit_size_bytes = source.avg_edit_size_bytes,
+                target.new_pages_created = source.new_pages_created,
+                target.large_deletions_count = source.large_deletions_count,
+                target.large_additions_count = source.large_additions_count,
+                target.large_deletion_rate = source.large_deletion_rate,
+                target.high_risk_user_count = source.high_risk_user_count,
+                target.medium_risk_user_count = source.medium_risk_user_count,
+                target.low_risk_user_count = source.low_risk_user_count,
+                target.platform_avg_risk_score = source.platform_avg_risk_score,
+                target.platform_max_risk_score = source.platform_max_risk_score,
+                target.total_alerts_triggered = source.total_alerts_triggered,
+                target.europe_percentage = source.europe_percentage,
+                target.americas_percentage = source.americas_percentage,
+                target.asia_pacific_percentage = source.asia_pacific_percentage,
+                target.peak_hour_events = source.peak_hour_events,
+                target.avg_events_per_hour = source.avg_events_per_hour,
+                target.platform_health_score = source.platform_health_score,
+                target.gold_processed_at = source.gold_processed_at,
+                target.schema_version = source.schema_version
+            WHEN NOT MATCHED THEN INSERT *
+        """)
+        print(f"Merged daily analytics summary")
+        
+        # Print today's health score
+        today_summary = spark.sql(f"""
+            SELECT platform_health_score, platform_avg_risk_score, total_events, high_risk_user_count
+            FROM incoming_summary
+            LIMIT 1
+        """).collect()
+        
+        if today_summary:
+            row = today_summary[0]
+            print(f"\n📊 DAILY PLATFORM SUMMARY:")
+            print(f"   Health Score: {row.platform_health_score}/100")
+            print(f"   Avg Risk Score: {row.platform_avg_risk_score}")
+            print(f"   Total Events: {row.total_events}")
+            print(f"   High Risk Users: {row.high_risk_user_count}")
     
     # Log high-risk alerts
     high_risk = spark.sql("""

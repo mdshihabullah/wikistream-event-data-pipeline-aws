@@ -16,8 +16,16 @@ Runs on EMR Serverless, triggered by Step Functions.
 Resource allocation: 2 vCPU driver + 2 vCPU executor = 4 vCPU total
 """
 
+import os
 import sys
 from datetime import datetime, timedelta
+
+# ============================================================================
+# IMPORTANT: Set SPARK_VERSION before importing PyDeequ modules
+# EMR 7.12.0 uses Spark 3.5.x - PyDeequ requires this environment variable
+# ============================================================================
+if "SPARK_VERSION" not in os.environ:
+    os.environ["SPARK_VERSION"] = "3.5"
 
 from pyspark.sql import SparkSession
 

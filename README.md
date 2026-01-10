@@ -99,11 +99,75 @@ flowchart LR
 | Layer | Job Type | Trigger | Description |
 |-------|----------|---------|-------------|
 | **Bronze** | Streaming | 30s micro-batches | Kafka → Iceberg with exactly-once semantics |
-| **Bronze DQ Gate** | Batch | Before Silver | Completeness, timeliness (95% ≤1min), validity checks |
-| **Silver** | Batch | Every 5 min (Step Functions) | Deduplication, normalization, enrichment |
+| **Bronze DQ Gate** | Batch | Before Silver | Completeness, timeliness (95% ≤3min), validity checks |
+| **Silver** | Batch | After Bronze DQ passes | Deduplication, normalization, enrichment |
 | **Silver DQ Gate** | Batch | After Silver | Accuracy, consistency, uniqueness, drift detection |
 | **Gold** | Batch | After Silver DQ passes | Aggregations: hourly stats, entity trends, risk scores |
 | **Gold DQ Gate** | Batch | After Gold | Upstream validation + aggregation consistency |
+
+### Step Function Pipeline Flow
+
+The batch pipeline is orchestrated by AWS Step Functions with a **self-looping continuous execution pattern**:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    BATCH PIPELINE STATE MACHINE                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────┐                                                    │
+│  │ RecordPipelineStart │ ← Initial trigger (after 15 min of Bronze data)   │
+│  └──────────┬──────────┘                                                    │
+│             ↓                                                               │
+│  ┌──────────────────────┐      ❌ CATCH     ┌──────────────────────┐       │
+│  │    BronzeDQGate      │ ────────────────→ │   NotifyFailure      │       │
+│  │  (EMR Serverless)    │                   │   → RecordMetric     │       │
+│  └──────────┬───────────┘                   │   → FAIL (stop loop) │       │
+│             ↓ ✅                             └──────────────────────┘       │
+│  ┌──────────────────────┐                                                   │
+│  │   StartSilverJob     │ ──────────❌────→ Same failure pattern            │
+│  └──────────┬───────────┘                                                   │
+│             ↓ ✅                                                             │
+│  ┌──────────────────────┐                                                   │
+│  │    SilverDQGate      │ ──────────❌────→ Same failure pattern            │
+│  └──────────┬───────────┘                                                   │
+│             ↓ ✅                                                             │
+│  ┌──────────────────────┐                                                   │
+│  │    StartGoldJob      │ ──────────❌────→ Same failure pattern            │
+│  └──────────┬───────────┘                                                   │
+│             ↓ ✅                                                             │
+│  ┌──────────────────────┐                                                   │
+│  │     GoldDQGate       │ ──────────❌────→ Same failure pattern            │
+│  └──────────┬───────────┘                                                   │
+│             ↓ ✅ ALL GATES PASSED                                           │
+│  ┌────────────────────────┐                                                 │
+│  │ RecordPipelineComplete │                                                 │
+│  └──────────┬─────────────┘                                                 │
+│             ↓                                                               │
+│  ┌────────────────────────┐                                                 │
+│  │ WaitBeforeNextCycle    │  ⏱️ Wait 10 minutes                             │
+│  └──────────┬─────────────┘                                                 │
+│             ↓                                                               │
+│  ┌────────────────────────┐                                                 │
+│  │   TriggerNextCycle     │ ───→ StartExecution (self) ───→ END            │
+│  └────────────────────────┘           ↑                                    │
+│                                       │                                    │
+│                              (New execution starts)                        │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│  TERMINAL STATES:                                                          │
+│  • ✅ SUCCESS: TriggerNextCycle → starts new execution → continuous loop   │
+│  • ❌ FAILURE: Fail state → stops loop → requires manual restart           │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Pipeline Timing
+
+| Phase | Duration |
+|-------|----------|
+| Initial wait (Bronze data collection) | 15 min |
+| Full batch pipeline execution | ~8-10 min |
+| Wait between successful cycles | 10 min |
+| **Total cycle time** | **~18-20 min** |
 
 ### Data Quality Gates
 
@@ -113,26 +177,28 @@ DQ gates block downstream processing when checks fail:
 Bronze → [Bronze DQ Gate] → Silver → [Silver DQ Gate] → Gold → [Gold DQ Gate]
                ↓                            ↓                       ↓
            ❌ FAIL                      ❌ FAIL                  ❌ FAIL
-         (blocks Silver)             (blocks Gold)            (alert only)
+      (stops pipeline)             (stops pipeline)         (stops pipeline)
 ```
 
 | Gate | Check Types | Failure Action |
 |------|-------------|----------------|
-| **Bronze DQ** | Completeness, Timeliness, Validity | Blocks Silver processing |
-| **Silver DQ** | Accuracy, Consistency, Uniqueness, Drift | Blocks Gold processing |
-| **Gold DQ** | Upstream verification, Aggregation checks | Alert but data available |
+| **Bronze DQ** | Completeness (100% for IDs, 95% for optional), Timeliness (95% ≤3min) | Stops pipeline, SNS alert |
+| **Silver DQ** | Accuracy, Consistency, Uniqueness, Drift detection | Stops pipeline, SNS alert |
+| **Gold DQ** | Upstream verification, Aggregation consistency | Stops pipeline, SNS alert |
 
 All DQ results are persisted to `dq_audit.quality_results` for audit and trend analysis.
 
 ### Key Features
 
-- **≤30 second** Bronze ingestion latency
-- **≤5 minute** end-to-end SLA for dashboard freshness
+- **≤30 second** Bronze ingestion latency (Spark Structured Streaming)
+- **≤20 minute** end-to-end SLA for dashboard freshness (continuous batch cycles)
 - **Exactly-once semantics** via Spark checkpointing and idempotent MERGE
-- **Auto-recovery** Lambda restarts Bronze job on health check failure
+- **Self-looping batch pipeline** with automatic 10-minute intervals between cycles
+- **Fail-fast on DQ failure** - pipeline stops on any gate failure (prevents cascading bad data)
+- **Auto-recovery** Lambda restarts Bronze streaming job on health check failure
 - **Data quality gates** that block downstream processing on failures
 - **DQ audit trail** with full evidence in Iceberg tables
-- **SNS alerts** for DQ gate failures to mrshihabullah@gmail.com
+- **SNS alerts** for DQ gate failures and pipeline errors
 
 ---
 
@@ -171,7 +237,7 @@ All DQ results are persisted to `dq_audit.quality_results` for audit and trend a
 | **Message Broker** | Amazon MSK (KRaft 3.9.x) | 2 brokers, topics: `raw-events`, `dlq-events` |
 | **Processing** | EMR Serverless (Spark 3.5) | Bronze streaming + Silver/Gold batch |
 | **Storage** | S3 Tables (Iceberg 1.10.0) | Medallion architecture tables |
-| **Orchestration** | Step Functions + EventBridge | Unified batch pipeline |
+| **Orchestration** | Step Functions (self-looping) | Continuous batch pipeline with 10-min intervals |
 | **Auto-Recovery** | Lambda + CloudWatch | Bronze job health monitoring |
 | **Monitoring** | CloudWatch + SNS | Dashboard, metrics, alerts |
 
@@ -203,21 +269,37 @@ Sample event from `stream.wikimedia.org/v2/stream/recentchange`:
 
 ```mermaid
 erDiagram
-    BRONZE_WIKI_EVENTS {
+    BRONZE_RAW_EVENTS {
         string event_id PK
+        string kafka_topic
+        int kafka_partition
+        bigint kafka_offset
+        timestamp kafka_timestamp
         bigint rc_id
         string event_type
+        int namespace
         string domain
         string title
+        string title_url
         string user
         boolean is_bot
+        string comment
+        string wiki
+        string server_name
+        int length_old
+        int length_new
         int length_delta
+        bigint revision_old
+        bigint revision_new
         timestamp event_timestamp
+        timestamp producer_ingested_at
+        timestamp bronze_processed_at
         string event_date "PARTITION"
         int event_hour "PARTITION"
+        string schema_version
     }
 
-    SILVER_WIKI_EVENTS_CLEANED {
+    SILVER_CLEANED_EVENTS {
         string event_id PK
         string event_type
         string domain
@@ -227,34 +309,101 @@ erDiagram
         boolean is_bot
         boolean is_anonymous
         int length_delta
-        boolean is_valid
+        boolean is_large_deletion
+        boolean is_large_addition
         timestamp event_timestamp
+        timestamp silver_processed_at
         string event_date "PARTITION"
+        string schema_version
     }
 
-    GOLD_HOURLY_EDIT_STATS {
-        string stat_date PK "PARTITION"
-        int stat_hour PK
-        string domain PK
+    GOLD_HOURLY_STATS {
+        string stat_date "PARTITION"
+        int stat_hour
+        string domain
+        string region "PARTITION"
         bigint total_events
         bigint unique_users
+        bigint unique_pages
         bigint bytes_added
+        bigint bytes_removed
+        double avg_edit_size
+        bigint bot_edits
+        bigint human_edits
         double bot_percentage
+        bigint anonymous_edits
+        bigint type_edit
+        bigint type_new
+        bigint type_categorize
+        bigint type_log
+        bigint large_deletions
+        bigint large_additions
+        timestamp gold_processed_at
+        string schema_version
     }
 
     GOLD_RISK_SCORES {
-        string stat_date PK "PARTITION"
-        string entity_id PK
+        string stat_date "PARTITION"
+        string entity_id
+        string entity_type
+        bigint total_edits
+        double edits_per_hour_avg
+        bigint large_deletions
+        bigint domains_edited
         double risk_score
         string risk_level
         string evidence
         boolean alert_triggered
+        timestamp gold_processed_at
+        string schema_version
     }
 
-    BRONZE_WIKI_EVENTS ||--o{ SILVER_WIKI_EVENTS_CLEANED : "transforms to"
-    SILVER_WIKI_EVENTS_CLEANED ||--o{ GOLD_HOURLY_EDIT_STATS : "aggregates to"
-    SILVER_WIKI_EVENTS_CLEANED ||--o{ GOLD_RISK_SCORES : "generates"
+    GOLD_DAILY_ANALYTICS_SUMMARY {
+        string summary_date "PARTITION"
+        bigint total_events
+        bigint unique_users
+        bigint active_domains
+        bigint unique_pages_edited
+        double bot_percentage
+        double anonymous_percentage
+        double registered_user_percentage
+        bigint total_bytes_added
+        bigint total_bytes_removed
+        bigint net_content_change
+        double avg_edit_size_bytes
+        bigint new_pages_created
+        bigint large_deletions_count
+        double large_deletion_rate
+        bigint high_risk_user_count
+        bigint medium_risk_user_count
+        bigint low_risk_user_count
+        double platform_avg_risk_score
+        double platform_max_risk_score
+        bigint total_alerts_triggered
+        double europe_percentage
+        double americas_percentage
+        double asia_pacific_percentage
+        bigint peak_hour_events
+        double avg_events_per_hour
+        double platform_health_score
+        timestamp gold_processed_at
+        string schema_version
+    }
+
+    BRONZE_RAW_EVENTS ||--o{ SILVER_CLEANED_EVENTS : "transforms to"
+    SILVER_CLEANED_EVENTS ||--o{ GOLD_HOURLY_STATS : "aggregates to"
+    SILVER_CLEANED_EVENTS ||--o{ GOLD_RISK_SCORES : "generates"
+    GOLD_HOURLY_STATS ||--o{ GOLD_DAILY_ANALYTICS_SUMMARY : "summarizes"
+    GOLD_RISK_SCORES ||--o{ GOLD_DAILY_ANALYTICS_SUMMARY : "summarizes"
 ```
+
+### Gold Tables Overview
+
+| Table | Purpose | Key Metrics |
+|-------|---------|-------------|
+| **hourly_stats** | Hourly activity by domain/region | Events, users, bytes, bot %, edit types |
+| **risk_scores** | User-level risk assessment | Risk score (0-100), risk level, evidence |
+| **daily_analytics_summary** | Executive KPI dashboard | Platform health score, risk overview, trends |
 
 ### Risk Score Explained
 
@@ -272,13 +421,38 @@ The `gold.risk_scores` table identifies potentially problematic edit patterns:
 - **MEDIUM** (40-69): Monitor closely
 - **LOW** (0-39): Normal activity
 
+### Daily Analytics Summary Explained
+
+The `gold.daily_analytics_summary` table provides a single-row-per-day executive dashboard with KPIs:
+
+| Category | Metrics | Purpose |
+|----------|---------|---------|
+| **Volume KPIs** | total_events, unique_users, active_domains, unique_pages_edited | Activity overview |
+| **User Mix** | bot_percentage, anonymous_percentage, registered_user_percentage | Community composition |
+| **Content Health** | net_content_change, avg_edit_size_bytes, new_pages_created | Content growth |
+| **Quality** | large_deletions_count, large_deletion_rate | Vandalism indicator |
+| **Risk Overview** | high/medium/low_risk_user_count, platform_avg_risk_score, alerts_triggered | Security posture |
+| **Regional** | europe/americas/asia_pacific_percentage | Geographic distribution |
+| **Platform Health Score** | 0-100 composite score | Overall platform wellness |
+
+**Platform Health Score (0-100):**
+
+| Factor | Points | Calculation |
+|--------|--------|-------------|
+| Low risk users | 0-40 | 40 × (low_risk_users / total_scored_users) |
+| Registered users | 0-30 | 30 × (registered_events / total_events) |
+| Content growth | 0-20 | 20 if bytes_added > bytes_removed |
+| Low deletion rate | 0-10 | 10 if large_deletions < 1% of events |
+
 ### Partitioning Strategy
 
-| Layer | Partition Columns | Rationale |
+| Table | Partition Columns | Rationale |
 |-------|-------------------|-----------|
-| **Bronze** | `(event_date, event_hour)` | Streaming micro-batches need time-based partitioning |
-| **Silver** | `(event_date)` | Date-based for efficient time-range queries |
-| **Gold** | `(stat_date)` | Daily aggregations |
+| **bronze.raw_events** | `(event_date, event_hour)` | Streaming micro-batches need time-based partitioning |
+| **silver.cleaned_events** | `(event_date, region)` | Date + region for efficient regional time-range queries |
+| **gold.hourly_stats** | `(stat_date, region)` | Date + region for dashboard drill-downs |
+| **gold.risk_scores** | `(stat_date)` | Daily user risk assessments |
+| **gold.daily_analytics_summary** | `(summary_date)` | One row per day for KPI trends |
 
 ---
 
@@ -292,7 +466,7 @@ The `gold.risk_scores` table identifies potentially problematic edit patterns:
 | **Silver/Gold Processing** | EMR Serverless (Batch) | Zero idle cost. Pay only during job execution. Auto-scaling Spark. |
 | **Table Format** | S3 Tables (Iceberg 1.10.0) | AWS-managed Iceberg with ACID transactions, time-travel, automatic compaction. |
 | **Data Quality** | AWS Deequ 2.0.7 | Native Spark integration. Completeness, validity, uniqueness checks. |
-| **Orchestration** | Step Functions + EventBridge | Serverless. Unified batch pipeline (Silver → DQ → Gold) |
+| **Orchestration** | Step Functions (self-looping) | Serverless. Continuous batch pipeline with 10-min intervals. Fail-fast on errors. |
 | **Auto-Recovery** | Lambda | Restarts Bronze job on CloudWatch alarm trigger |
 
 ### Why Not...?
@@ -373,8 +547,10 @@ DATA_BUCKET=$(terraform -chdir=../infrastructure/terraform output -raw data_buck
 aws s3 sync ../spark/jobs/ s3://${DATA_BUCKET}/spark/jobs/
 
 # 5. Start services
-./scripts/create_infra.sh  # Starts ECS producer + Bronze streaming job
+./scripts/create_infra.sh  # Starts ECS producer + Bronze streaming job + schedules batch pipeline
 ```
+
+> **Note:** The batch pipeline automatically starts 15 minutes after `create_infra.sh` to allow Bronze layer to collect sufficient data. It then runs continuously with 10-minute intervals between cycles.
 
 ### Verify Pipeline
 
@@ -486,12 +662,12 @@ wikistream/
 | **MSK Cluster (KRaft)** | ✅ Implemented | Kafka 3.9.x, 2 brokers |
 | **Bronze Streaming Job** | ✅ Implemented | 30s micro-batches, MERGE INTO |
 | **Silver Batch Job** | ✅ Implemented | Deduplication, normalization |
-| **Gold Batch Job** | ✅ Implemented | Aggregations, risk scores |
-| **Bronze DQ Gate** | ✅ Implemented | Completeness, timeliness (95% ≤1min), validity |
+| **Gold Batch Job** | ✅ Implemented | Aggregations, risk scores, daily analytics summary |
+| **Bronze DQ Gate** | ✅ Implemented | Completeness, timeliness (95% ≤3min), validity |
 | **Silver DQ Gate** | ✅ Implemented | Accuracy, consistency, uniqueness, drift detection |
 | **Gold DQ Gate** | ✅ Implemented | Upstream validation, aggregation consistency |
 | **DQ Audit Tables** | ✅ Implemented | `dq_audit.quality_results`, `dq_audit.profile_metrics` |
-| **Step Functions Pipeline** | ✅ Implemented | With DQ gates: Bronze DQ → Silver → Silver DQ → Gold → Gold DQ |
+| **Step Functions Pipeline** | ✅ Implemented | Self-looping: Bronze DQ → Silver → Silver DQ → Gold → Gold DQ → Wait 10min → Repeat |
 | **Auto-Restart Lambda** | ✅ Implemented | CloudWatch alarm trigger |
 | **CloudWatch Dashboard** | ✅ Implemented | Pipeline health + DQ gate metrics |
 | **Grafana (Docker)** | ✅ Implemented | Local operational monitoring |

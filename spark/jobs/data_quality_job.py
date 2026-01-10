@@ -12,10 +12,18 @@ This implementation includes a fallback to SQL-based checks if Deequ fails.
 Optimized for 4 vCPU (1 driver + 1 executor × 2 vCPU)
 """
 
+import os
 import sys
 import json
 import boto3
 from datetime import datetime
+
+# ============================================================================
+# IMPORTANT: Set SPARK_VERSION before importing PyDeequ modules
+# EMR 7.12.0 uses Spark 3.5.x - PyDeequ requires this environment variable
+# ============================================================================
+if "SPARK_VERSION" not in os.environ:
+    os.environ["SPARK_VERSION"] = "3.5"
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, count, countDistinct, when, lit
@@ -30,7 +38,7 @@ try:
         Mean, StandardDeviation, Minimum, Maximum
     )
     DEEQU_AVAILABLE = True
-    print("PyDeequ imported successfully")
+    print(f"PyDeequ imported successfully with SPARK_VERSION={os.environ.get('SPARK_VERSION')}")
 except ImportError as e:
     print(f"PyDeequ not available, using SQL-based checks: {e}")
 
