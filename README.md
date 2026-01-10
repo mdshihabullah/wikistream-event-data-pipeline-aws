@@ -74,31 +74,44 @@ flowchart LR
 
     subgraph Processing["⚡ EMR Serverless"]
         BRONZE["🥉 Bronze<br/>Streaming"]
+        BDQ["🔍 Bronze DQ"]
         SILVER["🥈 Silver<br/>Batch"]
-        DQ["🔍 Data Quality"]
+        SDQ["🔍 Silver DQ"]
         GOLD["🥇 Gold<br/>Batch"]
+        GDQ["🔍 Gold DQ"]
     end
 
     subgraph Storage["💾 S3 Tables"]
         ICE["Apache Iceberg<br/>Tables"]
     end
 
+    subgraph Orchestration["🔄 Step Functions"]
+        SF["Self-Looping<br/>Batch Pipeline"]
+    end
+
     WM -->|SSE| ECS
     ECS -->|Produce| MSK
-    MSK -->|30s micro-batch| BRONZE
+    MSK -->|3 min micro-batch| BRONZE
     BRONZE --> ICE
-    ICE --> SILVER
+    ICE --> BDQ
+    BDQ --> SILVER
     SILVER --> ICE
-    ICE --> DQ
-    ICE --> GOLD
+    ICE --> SDQ
+    SDQ --> GOLD
     GOLD --> ICE
+    ICE --> GDQ
+    SF -.->|Orchestrates| BDQ
+    SF -.->|Orchestrates| SILVER
+    SF -.->|Orchestrates| SDQ
+    SF -.->|Orchestrates| GOLD
+    SF -.->|Orchestrates| GDQ
 ```
 
 ### Processing Flow with DQ Gates
 
 | Layer | Job Type | Trigger | Description |
 |-------|----------|---------|-------------|
-| **Bronze** | Streaming | 30s micro-batches | Kafka → Iceberg with exactly-once semantics |
+| **Bronze** | Streaming | 3 min micro-batches | Kafka → Iceberg with exactly-once semantics |
 | **Bronze DQ Gate** | Batch | Before Silver | Completeness, timeliness (95% ≤3min), validity checks |
 | **Silver** | Batch | After Bronze DQ passes | Deduplication, normalization, enrichment |
 | **Silver DQ Gate** | Batch | After Silver | Accuracy, consistency, uniqueness, drift detection |
@@ -190,7 +203,7 @@ All DQ results are persisted to `dq_audit.quality_results` for audit and trend a
 
 ### Key Features
 
-- **≤30 second** Bronze ingestion latency (Spark Structured Streaming)
+- **≤3 minute** Bronze ingestion latency (Spark Structured Streaming)
 - **≤20 minute** end-to-end SLA for dashboard freshness (continuous batch cycles)
 - **Exactly-once semantics** via Spark checkpointing and idempotent MERGE
 - **Self-looping batch pipeline** with automatic 10-minute intervals between cycles
@@ -209,23 +222,30 @@ All DQ results are persisted to `dq_audit.quality_results` for audit and trend a
 ### High-Level Components
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              WikiStream Pipeline                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              WikiStream Pipeline                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 
-  INGESTION              STREAMING              PROCESSING           STORAGE
-┌────────────┐        ┌────────────┐        ┌────────────────┐    ┌──────────┐
-│ Wikipedia  │        │  Amazon    │        │ EMR Serverless │    │ S3 Tables│
-│ SSE Feed   │──────▶│   MSK      │──────▶│                │───▶│ (Iceberg)│
-└────────────┘        │  (Kafka)   │        │ Bronze→Silver  │    │          │
-      │               └────────────┘        │ →DQ→Gold       │    │ bronze   │
-      ▼                                     └────────────────┘    │ silver   │
-┌────────────┐                                     │              │ gold     │
-│ECS Fargate │                                     ▼              └──────────┘
-│ Producer   │                              ┌────────────┐
-└────────────┘                              │   Step     │
-                                            │ Functions  │
-                                            └────────────┘
+  INGESTION           STREAMING           BATCH PROCESSING              STORAGE
+┌────────────┐     ┌────────────┐     ┌─────────────────────────┐    ┌───────────┐
+│ Wikipedia  │     │  Amazon    │     │    EMR Serverless       │    │ S3 Tables │
+│ SSE Feed   │────▶│   MSK      │────▶│                         │───▶│ (Iceberg) │
+└────────────┘     │  (Kafka)   │     │ Bronze (streaming)      │    │           │
+      │            └────────────┘     │   ↓                     │    │ bronze    │
+      ▼                               │ Bronze DQ Gate          │    │ silver    │
+┌────────────┐                        │   ↓                     │    │ gold      │
+│ECS Fargate │                        │ Silver → Silver DQ Gate │    │ dq_audit  │
+│ Producer   │                        │   ↓                     │    └───────────┘
+└────────────┘                        │ Gold → Gold DQ Gate     │
+                                      └─────────────────────────┘
+                                                  │
+  ORCHESTRATION                                   │              MONITORING
+┌──────────────────────┐                         │            ┌─────────────┐
+│   Step Functions     │◀────────────────────────┘            │ CloudWatch  │
+│ (Self-Looping Batch  │                                      │ Dashboard   │
+│    Pipeline)         │─────────────────────────────────────▶│ + Alarms    │
+└──────────────────────┘                                      │ + SNS       │
+                                                              └─────────────┘
 ```
 
 ### System Components
@@ -256,10 +276,17 @@ Sample event from `stream.wikimedia.org/v2/stream/recentchange`:
     "domain": "en.wikipedia.org",
     "dt": "2025-01-01T10:00:00Z"
   },
+  "id": 1234567890,
   "type": "edit",
+  "namespace": 0,
   "title": "Example_Article",
+  "title_url": "https://en.wikipedia.org/wiki/Example_Article",
   "user": "Editor123",
   "bot": false,
+  "comment": "Fixed typo in introduction",
+  "wiki": "enwiki",
+  "server_name": "en.wikipedia.org",
+  "timestamp": 1704103200,
   "length": {"old": 1000, "new": 1050},
   "revision": {"old": 123456, "new": 123457}
 }
@@ -453,6 +480,20 @@ The `gold.daily_analytics_summary` table provides a single-row-per-day executive
 | **gold.hourly_stats** | `(stat_date, region)` | Date + region for dashboard drill-downs |
 | **gold.risk_scores** | `(stat_date)` | Daily user risk assessments |
 | **gold.daily_analytics_summary** | `(summary_date)` | One row per day for KPI trends |
+
+### Operational Tables (DQ Audit)
+
+In addition to the medallion architecture tables, the pipeline maintains **DQ audit tables** in a separate `dq_audit` namespace for data quality tracking and compliance:
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| **quality_results** | Records all DQ gate check results | run_id, layer, check_name, status, metric_value, evidence |
+| **profile_metrics** | Data profiling statistics for drift detection | column_name, null_rate, distinct_count, mean_value, percentiles |
+
+These tables enable:
+- **Audit trail** for compliance and debugging
+- **Trend analysis** of data quality over time
+- **Drift detection** by comparing current profiles to historical baselines
 
 ---
 
@@ -660,7 +701,7 @@ wikistream/
 |-----------|--------|-------|
 | **ECS Kafka Producer** | ✅ Implemented | Python, IAM auth, DLQ support |
 | **MSK Cluster (KRaft)** | ✅ Implemented | Kafka 3.9.x, 2 brokers |
-| **Bronze Streaming Job** | ✅ Implemented | 30s micro-batches, MERGE INTO |
+| **Bronze Streaming Job** | ✅ Implemented | 3 min micro-batches, MERGE INTO |
 | **Silver Batch Job** | ✅ Implemented | Deduplication, normalization |
 | **Gold Batch Job** | ✅ Implemented | Aggregations, risk scores, daily analytics summary |
 | **Bronze DQ Gate** | ✅ Implemented | Completeness, timeliness (95% ≤3min), validity |
@@ -684,9 +725,11 @@ Built as a portfolio project demonstrating modern data engineering on AWS.
 **Skills Demonstrated:**
 - Real-time streaming with Kafka (MSK KRaft 3.9.x)
 - Apache Iceberg 1.10.0 on S3 Tables
-- Serverless Spark (EMR Serverless 7.12.0)
+- Serverless Spark (EMR Serverless 7.12.0, Spark 3.5)
 - Infrastructure as Code (Terraform)
 - Medallion Architecture (Bronze streaming, Silver/Gold batch)
-- Data Quality (AWS Deequ)
-- Self-healing infrastructure (Lambda auto-restart)
-- Cost-optimized dev workflow
+- Data Quality Gates (AWS Deequ 2.0.7 with audit trail)
+- Pipeline Orchestration (Step Functions self-looping batch pipeline)
+- Observability (CloudWatch Dashboard, Alarms, SNS Alerts)
+- Self-healing infrastructure (Lambda auto-restart on health check failure)
+- Cost-optimized dev workflow (destroy/create scripts)
