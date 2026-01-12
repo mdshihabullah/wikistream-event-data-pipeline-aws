@@ -64,8 +64,9 @@
             height: 100%;
             display: flex !important;
             flex-direction: column;
-            padding: 0.4em 0.7em 1.8em 0.7em;
+            padding: 0.6em 1em 2em 1em;
             box-sizing: border-box;
+            gap: 0.3em;
         }
         
         .reveal h1, .reveal h2, .reveal h3 {
@@ -177,15 +178,15 @@
         .two-col {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 0.8em;
-            margin-top: 0.2em;
+            gap: 1em;
+            margin-top: 0.4em;
         }
         
         .three-col {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
-            gap: 0.6em;
-            margin-top: 0.2em;
+            gap: 0.8em;
+            margin-top: 0.4em;
         }
         
         .grow { flex: 1; }
@@ -601,6 +602,116 @@
             padding: 0.6em;
             margin: 0.3em 0;
         }
+        
+        /* Professional watermark with QR code - right bottom corner */
+        .watermark {
+            position: absolute;
+            bottom: 1.8em;
+            right: 0.8em;
+            display: flex;
+            align-items: center;
+            gap: 0.3em;
+            opacity: 0.7;
+            z-index: 10;
+            transition: opacity 0.2s;
+        }
+        
+        .watermark:hover {
+            opacity: 1;
+        }
+        
+        .watermark a {
+            display: flex;
+            align-items: center;
+            gap: 0.25em;
+            text-decoration: none;
+            color: var(--nf-medium-gray);
+        }
+        
+        .watermark .qr-container {
+            width: 32px;
+            height: 32px;
+            background: white;
+            border-radius: 3px;
+            padding: 2px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .watermark .author-info {
+            font-size: 0.45em;
+            line-height: 1.2;
+            text-align: right;
+        }
+        
+        .watermark .author-name {
+            font-weight: 600;
+            color: var(--nf-charcoal);
+        }
+        
+        .watermark .author-title {
+            color: var(--nf-medium-gray);
+        }
+        
+        /* Key points list - vertical style */
+        .key-points {
+            margin: 0.4em 0;
+        }
+        
+        .key-points li {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.4em;
+            margin: 0.2em 0;
+            font-size: 0.7em;
+        }
+        
+        .key-points .icon {
+            color: var(--dq-green);
+            font-weight: bold;
+        }
+        
+        /* Vertical flow diagram */
+        .vertical-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15em;
+            align-items: center;
+        }
+        
+        .vertical-flow .flow-arrow {
+            font-size: 0.8em;
+            color: var(--nf-medium-gray);
+        }
+        
+        /* Discussion topics for Q&A */
+        .discussion-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.6em;
+            margin: 0.4em 0;
+        }
+        
+        .discussion-item {
+            background: var(--nf-light-gray);
+            border-radius: 4px;
+            padding: 0.4em 0.5em;
+            border-left: 3px solid var(--nf-orange);
+        }
+        
+        .discussion-item h4 {
+            margin: 0 0 0.2em 0;
+            font-size: 0.7em;
+            color: var(--nf-charcoal);
+        }
+        
+        .discussion-item p {
+            margin: 0;
+            font-size: 0.6em;
+            color: var(--nf-medium-gray);
+        }
     </style>
 </head>
 <body>
@@ -610,7 +721,7 @@
             <!-- ==================== SLIDE 1: Title ==================== -->
             <section class="title-slide">
                 <div>
-                    <h1>WikiStream</h1>
+                <h1>WikiStream</h1>
                     <p class="subtitle">Real-Time Wikipedia Edit Analytics Pipeline</p>
                     <div class="accent-bar" style="margin: 0 auto;"></div>
                 </div>
@@ -643,6 +754,22 @@
                     📁 <a href="https://github.com/mdshihabullah/wikistream-event-data-pipeline/" target="_blank" style="color: var(--nf-orange);">github.com/mdshihabullah/wikistream-event-data-pipeline</a>
                 </p>
                 
+                <!-- Watermark with QR code - right corner -->
+                <div class="watermark">
+                    <a href="https://www.linkedin.com/in/shihabullah/" target="_blank" title="Connect on LinkedIn">
+                        <div class="author-info">
+                            <div class="author-name">Shihab Ullah</div>
+                            <div class="author-title">Data Engineer</div>
+                        </div>
+                        <div class="qr-container">
+                            <svg viewBox="0 0 29 29" width="28" height="28">
+                                <rect fill="#fff" x="0" y="0" width="29" height="29"/>
+                                <path fill="#000" d="M0 0h7v1h-7zM8 0h1v1h-1zM10 0h2v1h-2zM14 0h1v1h-1zM17 0h2v1h-2zM22 0h7v1h-7zM0 1h1v1h-1zM6 1h1v1h-1zM8 1h2v1h-2zM11 1h1v1h-1zM14 1h1v1h-1zM16 1h1v1h-1zM18 1h2v1h-2zM22 1h1v1h-1zM28 1h1v1h-1zM0 2h1v1h-1zM2 2h3v1h-3zM6 2h1v1h-1zM10 2h1v1h-1zM12 2h2v1h-2zM15 2h1v1h-1zM17 2h1v1h-1zM19 2h1v1h-1zM22 2h1v1h-1zM24 2h3v1h-3zM28 2h1v1h-1zM0 3h1v1h-1zM2 3h3v1h-3zM6 3h1v1h-1zM8 3h1v1h-1zM11 3h2v1h-2zM14 3h3v1h-3zM18 3h2v1h-2zM22 3h1v1h-1zM24 3h3v1h-3zM28 3h1v1h-1zM0 4h1v1h-1zM2 4h3v1h-3zM6 4h1v1h-1zM9 4h1v1h-1zM12 4h1v1h-1zM14 4h1v1h-1zM17 4h1v1h-1zM19 4h1v1h-1zM22 4h1v1h-1zM24 4h3v1h-3zM28 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM10 5h2v1h-2zM15 5h1v1h-1zM17 5h3v1h-3zM22 5h1v1h-1zM28 5h1v1h-1zM0 6h7v1h-7zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h1v1h-1zM20 6h1v1h-1zM22 6h7v1h-7zM9 7h1v1h-1zM11 7h3v1h-3zM15 7h2v1h-2zM18 7h2v1h-2zM0 8h1v1h-1zM3 8h1v1h-1zM6 8h2v1h-2zM10 8h1v1h-1zM13 8h1v1h-1zM15 8h1v1h-1zM17 8h3v1h-3zM21 8h2v1h-2zM25 8h1v1h-1zM27 8h2v1h-2zM1 9h1v1h-1zM3 9h2v1h-2zM7 9h1v1h-1zM9 9h3v1h-3zM13 9h1v1h-1zM18 9h1v1h-1zM20 9h3v1h-3zM24 9h2v1h-2zM27 9h1v1h-1zM0 10h2v1h-2zM3 10h2v1h-2zM6 10h3v1h-3zM11 10h2v1h-2zM14 10h3v1h-3zM18 10h2v1h-2zM21 10h3v1h-3zM25 10h2v1h-2zM28 10h1v1h-1zM0 11h1v1h-1zM3 11h1v1h-1zM5 11h3v1h-3zM9 11h2v1h-2zM13 11h2v1h-2zM16 11h1v1h-1zM18 11h2v1h-2zM21 11h1v1h-1zM24 11h1v1h-1zM26 11h3v1h-3zM0 12h3v1h-3zM6 12h1v1h-1zM8 12h5v1h-5zM14 12h2v1h-2zM18 12h1v1h-1zM21 12h1v1h-1zM23 12h1v1h-1zM25 12h4v1h-4zM0 13h1v1h-1zM3 13h2v1h-2zM7 13h1v1h-1zM11 13h2v1h-2zM17 13h2v1h-2zM20 13h1v1h-1zM23 13h2v1h-2zM26 13h1v1h-1zM28 13h1v1h-1zM1 14h3v1h-3zM5 14h1v1h-1zM7 14h3v1h-3zM13 14h1v1h-1zM15 14h2v1h-2zM18 14h2v1h-2zM22 14h1v1h-1zM24 14h1v1h-1zM26 14h1v1h-1zM1 15h1v1h-1zM3 15h1v1h-1zM7 15h1v1h-1zM9 15h1v1h-1zM12 15h1v1h-1zM14 15h2v1h-2zM17 15h2v1h-2zM20 15h2v1h-2zM24 15h1v1h-1zM26 15h2v1h-2zM0 16h1v1h-1zM2 16h2v1h-2zM6 16h1v1h-1zM8 16h3v1h-3zM12 16h1v1h-1zM14 16h5v1h-5zM20 16h1v1h-1zM23 16h3v1h-3zM27 16h1v1h-1zM0 17h2v1h-2zM3 17h2v1h-2zM6 17h1v1h-1zM9 17h1v1h-1zM11 17h3v1h-3zM16 17h1v1h-1zM19 17h1v1h-1zM21 17h4v1h-4zM26 17h1v1h-1zM0 18h1v1h-1zM3 18h3v1h-3zM7 18h1v1h-1zM9 18h2v1h-2zM12 18h4v1h-4zM17 18h2v1h-2zM21 18h2v1h-2zM25 18h3v1h-3zM0 19h1v1h-1zM2 19h1v1h-1zM5 19h2v1h-2zM9 19h1v1h-1zM12 19h4v1h-4zM17 19h1v1h-1zM20 19h1v1h-1zM22 19h1v1h-1zM24 19h1v1h-1zM27 19h2v1h-2zM0 20h1v1h-1zM2 20h2v1h-2zM5 20h3v1h-3zM10 20h2v1h-2zM14 20h1v1h-1zM16 20h2v1h-2zM19 20h1v1h-1zM22 20h3v1h-3zM26 20h2v1h-2zM8 21h4v1h-4zM14 21h3v1h-3zM18 21h3v1h-3zM22 21h1v1h-1zM24 21h5v1h-5zM0 22h7v1h-7zM8 22h1v1h-1zM10 22h1v1h-1zM12 22h1v1h-1zM17 22h1v1h-1zM19 22h1v1h-1zM22 22h3v1h-3zM27 22h1v1h-1zM0 23h1v1h-1zM6 23h1v1h-1zM8 23h2v1h-2zM12 23h1v1h-1zM14 23h3v1h-3zM22 23h1v1h-1zM24 23h1v1h-1zM26 23h1v1h-1zM28 23h1v1h-1zM0 24h1v1h-1zM2 24h3v1h-3zM6 24h1v1h-1zM9 24h1v1h-1zM11 24h2v1h-2zM15 24h1v1h-1zM17 24h4v1h-4zM22 24h1v1h-1zM24 24h2v1h-2zM27 24h2v1h-2zM0 25h1v1h-1zM2 25h3v1h-3zM6 25h1v1h-1zM8 25h2v1h-2zM11 25h1v1h-1zM14 25h2v1h-2zM18 25h2v1h-2zM23 25h2v1h-2zM26 25h2v1h-2zM0 26h1v1h-1zM2 26h3v1h-3zM6 26h1v1h-1zM11 26h1v1h-1zM13 26h2v1h-2zM16 26h2v1h-2zM19 26h2v1h-2zM22 26h2v1h-2zM25 26h1v1h-1zM27 26h2v1h-2zM0 27h1v1h-1zM6 27h1v1h-1zM8 27h5v1h-5zM15 27h2v1h-2zM18 27h1v1h-1zM20 27h1v1h-1zM23 27h2v1h-2zM26 27h1v1h-1zM0 28h7v1h-7zM10 28h2v1h-2zM14 28h1v1h-1zM17 28h2v1h-2zM20 28h1v1h-1zM22 28h1v1h-1zM24 28h1v1h-1zM27 28h1v1h-1z"/>
+                            </svg>
+                        </div>
+                    </a>
+                </div>
+                
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
                     <span>Data Engineering Portfolio</span>
@@ -670,7 +797,7 @@
                         <div class="info-box" style="margin-top: 0.5em;">
                             <strong>Data Source:</strong> Wikimedia EventStreams (SSE)<br>
                             <code>stream.wikimedia.org/v2/stream/recentchange</code>
-                        </div>
+                    </div>
                     </div>
                     
                     <div>
@@ -687,18 +814,18 @@
                         <p class="small">High-activity: <code>en, de, ja, fr, zh, es, ru</code></p>
                         <p class="small">Regions: <code>asia_pacific, europe, americas, middle_east</code></p>
                     </div>
-                </div>
-                
+                        </div>
+                        
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
                     <span>Business Context</span>
-                </div>
+                        </div>
             </section>
             
             <!-- ==================== SLIDE 3: C4 Level 1 - System Context ==================== -->
             <section>
                 <h2>Architecture: System Context</h2>
-                <p class="tiny">C4 Model Level 1 — System in context with external systems and users</p>
+                <p class="tiny">System in context with external systems and users</p>
                 
                 <div class="c4-diagram">
                     <div class="c4-context">
@@ -706,7 +833,7 @@
                             <div class="icon">🌐</div>
                             <strong>Wikipedia</strong>
                             <div class="desc">EventStreams API<br>Server-Sent Events</div>
-                        </div>
+                    </div>
                         
                         <div class="c4-arrow">
                             <div>→ Real-time →</div>
@@ -844,94 +971,121 @@
             <!-- ==================== SLIDE 5: Detailed Architecture ==================== -->
             <section>
                 <h2>Architecture: Container Detail</h2>
-                <p class="tiny">AWS components within VPC (us-east-1) — from ARCHITECTURE.md</p>
+                <p class="tiny">AWS VPC (us-east-1)</p>
                 
-                <div class="diagram-container" style="font-size: 0.6em;">
-                    <div style="display: grid; grid-template-columns: 0.8fr 1fr 2fr 1fr; gap: 0.6em; align-items: start;">
-                        <!-- Column 1: External -->
-                        <div>
-                            <div style="background: #E0E0E0; padding: 0.4em; border-radius: 3px; text-align: center; border: 2px dashed #999;">
-                                <strong>☁️ EXTERNAL</strong><br>
-                                <span style="font-size: 0.85em;">Wikipedia EventStreams</span><br>
-                                <span class="tiny">Server-Sent Events</span>
+                <div class="diagram-container" style="font-size: 0.55em; flex: 1; display: flex; flex-direction: column;">
+                    <!-- Top Row: External + Ingestion + Streaming -->
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 0.4em; margin-bottom: 0.4em;">
+                        <div style="background: #E8E8E8; padding: 0.5em 0.6em; border-radius: 4px; text-align: center; border: 2px dashed #888; min-width: 100px;">
+                            <div style="font-size: 1.4em;">🌐</div>
+                            <strong>EXTERNAL</strong><br>
+                            <span style="font-size: 0.9em;">Wikipedia SSE</span>
+                        </div>
+                        <span style="font-size: 1.3em; color: var(--nf-orange);">→</span>
+                        <div style="background: rgba(232,90,35,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--nf-orange); min-width: 110px;">
+                            <div style="font-size: 1.4em;">🐳</div>
+                            <strong>ECS Fargate</strong><br>
+                            <span class="tiny">Producer • 0.25 vCPU</span>
+                        </div>
+                        <span style="font-size: 1.3em; color: var(--info-blue);">→</span>
+                        <div style="background: rgba(52,152,219,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--info-blue); min-width: 130px;">
+                            <div style="font-size: 1.4em;">📨</div>
+                            <strong>Amazon MSK</strong><br>
+                            <span class="tiny">Kafka 3.9.x KRaft</span><br>
+                            <span class="tiny">2× kafka.t3.small</span>
+                        </div>
+                        <span style="font-size: 1.3em; color: var(--nf-purple);">→</span>
+                    </div>
+                    
+                    <!-- Processing Layer (EMR Serverless) -->
+                    <div style="background: rgba(108,92,231,0.08); padding: 0.5em; border-radius: 4px; border: 2px solid var(--nf-purple); margin-bottom: 0.4em;">
+                        <div style="text-align: center; margin-bottom: 0.3em;"><strong>⚡ EMR SERVERLESS</strong> <span class="tiny">Spark 3.5 • emr-7.12.0 • 4 vCPU/job</span></div>
+                        <div style="display: flex; justify-content: center; align-items: center; gap: 0.3em; flex-wrap: wrap;">
+                            <div style="background: linear-gradient(135deg, #CD7F32, #A66726); color: white; padding: 0.4em 0.6em; border-radius: 3px; text-align: center; min-width: 80px;">
+                                <div style="font-size: 1.1em;">🥉</div>
+                                <strong>Bronze</strong><br>
+                                <span style="font-size: 0.85em;">Streaming</span><br>
+                                <span style="font-size: 0.8em; opacity: 0.9;">3-min batch</span>
+                            </div>
+                            <span style="color: var(--dq-green); font-weight: bold;">→</span>
+                            <div style="background: var(--dq-green); color: white; padding: 0.35em 0.5em; border-radius: 3px; text-align: center;">
+                                🔍<br><span style="font-size: 0.85em;">Bronze DQ</span>
+                            </div>
+                            <span style="color: var(--silver);">→</span>
+                            <div style="background: linear-gradient(135deg, #8E8E8E, #666666); color: white; padding: 0.4em 0.6em; border-radius: 3px; text-align: center; min-width: 80px;">
+                                <div style="font-size: 1.1em;">🥈</div>
+                                <strong>Silver</strong><br>
+                                <span style="font-size: 0.85em;">Batch</span><br>
+                                <span style="font-size: 0.8em; opacity: 0.9;">Transform</span>
+                            </div>
+                            <span style="color: var(--dq-green); font-weight: bold;">→</span>
+                            <div style="background: var(--dq-green); color: white; padding: 0.35em 0.5em; border-radius: 3px; text-align: center;">
+                                🔍<br><span style="font-size: 0.85em;">Silver DQ</span>
+                            </div>
+                            <span style="color: var(--gold);">→</span>
+                            <div style="background: linear-gradient(135deg, #D4AF37, #B8962E); color: white; padding: 0.4em 0.6em; border-radius: 3px; text-align: center; min-width: 80px;">
+                                <div style="font-size: 1.1em;">🥇</div>
+                                <strong>Gold</strong><br>
+                                <span style="font-size: 0.85em;">Batch</span><br>
+                                <span style="font-size: 0.8em; opacity: 0.9;">Aggregate</span>
+                            </div>
+                            <span style="color: var(--dq-green); font-weight: bold;">→</span>
+                            <div style="background: var(--dq-green); color: white; padding: 0.35em 0.5em; border-radius: 3px; text-align: center;">
+                                🔍<br><span style="font-size: 0.85em;">Gold DQ</span>
                             </div>
                         </div>
-                        
-                        <!-- Column 2: Ingestion -->
-                        <div>
-                            <div style="background: rgba(232,90,35,0.08); padding: 0.35em; border-radius: 3px; border: 2px solid var(--nf-orange);">
-                                <strong>📥 INGESTION</strong><br>
-                                <div style="background: white; margin-top: 0.2em; padding: 0.2em; border-radius: 2px; font-size: 0.85em;">
-                                    🐳 ECS Fargate<br>
-                                    <span class="tiny">0.25 vCPU / 512 MB</span>
-                                </div>
-                            </div>
-                            <div style="text-align: center; margin: 0.2em 0;">↓</div>
-                            <div style="background: rgba(52,152,219,0.08); padding: 0.35em; border-radius: 3px; border: 2px solid var(--info-blue);">
-                                <strong>📡 STREAMING</strong><br>
-                                <div style="background: white; margin-top: 0.2em; padding: 0.2em; border-radius: 2px; font-size: 0.85em;">
-                                    📨 MSK Kafka<br>
-                                    <span class="tiny">2× kafka.t3.small, KRaft 3.9.x</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Column 3: Processing -->
-                        <div style="background: rgba(108,92,231,0.08); padding: 0.35em; border-radius: 3px; border: 2px solid var(--nf-purple);">
-                            <strong>⚡ EMR SERVERLESS (Spark 3.5, emr-7.12.0)</strong>
-                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.2em; margin-top: 0.3em;">
-                                <div style="background: var(--bronze); color: white; padding: 0.2em; border-radius: 2px; text-align: center;">
-                                    🥉 Bronze<br><span style="font-size: 0.8em;">Stream</span>
-                                </div>
-                                <div style="background: var(--silver); color: white; padding: 0.2em; border-radius: 2px; text-align: center;">
-                                    🥈 Silver<br><span style="font-size: 0.8em;">Batch</span>
-                                </div>
-                                <div style="background: var(--gold); color: white; padding: 0.2em; border-radius: 2px; text-align: center;">
-                                    🥇 Gold<br><span style="font-size: 0.8em;">Batch</span>
-                                </div>
-                                <div style="background: var(--dq-green); color: white; padding: 0.2em; border-radius: 2px; text-align: center;">
-                                    🔍 Bronze DQ
-                                </div>
-                                <div style="background: var(--dq-green); color: white; padding: 0.2em; border-radius: 2px; text-align: center;">
-                                    🔍 Silver DQ
-                                </div>
-                                <div style="background: var(--dq-green); color: white; padding: 0.2em; border-radius: 2px; text-align: center;">
-                                    🔍 Gold DQ
-                                </div>
-                            </div>
-                            <div class="tiny" style="margin-top: 0.2em;">4 vCPU per job (1 driver + 1 executor)</div>
-                        </div>
-                        
-                        <!-- Column 4: Storage & Ops -->
-                        <div>
-                            <div style="background: rgba(212,175,55,0.08); padding: 0.35em; border-radius: 3px; border: 2px solid var(--gold);">
-                                <strong>💾 STORAGE</strong><br>
-                                <div style="background: white; margin-top: 0.2em; padding: 0.2em; border-radius: 2px; font-size: 0.85em;">
-                                    📊 S3 Tables<br>
+                    </div>
+                    
+                    <!-- Bottom Row: Storage + Operations -->
+                    <div style="display: flex; justify-content: center; gap: 0.8em;">
+                        <div style="background: rgba(212,175,55,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--gold); flex: 1; max-width: 200px;">
+                            <strong>💾 STORAGE</strong>
+                            <div style="display: flex; gap: 0.3em; margin-top: 0.3em;">
+                                <div style="background: white; padding: 0.3em; border-radius: 2px; flex: 1; text-align: center;">
+                                    <div style="font-size: 1.1em;">🧊</div>
+                                    <strong>S3 Tables</strong><br>
                                     <span class="tiny">Iceberg 1.10.0</span>
                                 </div>
-                                <div style="background: white; margin-top: 0.15em; padding: 0.2em; border-radius: 2px; font-size: 0.85em;">
-                                    📦 S3 Bucket<br>
+                                <div style="background: white; padding: 0.3em; border-radius: 2px; flex: 1; text-align: center;">
+                                    <div style="font-size: 1.1em;">📦</div>
+                                    <strong>S3 Bucket</strong><br>
                                     <span class="tiny">Checkpoints</span>
                                 </div>
                             </div>
-                            <div style="text-align: center; margin: 0.2em 0;">↑</div>
-                            <div style="background: rgba(32,178,170,0.08); padding: 0.35em; border-radius: 3px; border: 2px solid var(--nf-teal);">
-                                <strong>📈 OPS</strong><br>
-                                <div style="font-size: 0.85em; margin-top: 0.15em;">
-                                    ⚙️ Step Functions<br>
-                                    ⏰ EventBridge<br>
-                                    📊 CloudWatch<br>
-                                    λ Auto-Restart
+                        </div>
+                        
+                        <div style="background: rgba(32,178,170,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--nf-teal); flex: 1; max-width: 280px;">
+                            <strong>📈 ORCHESTRATION & MONITORING</strong>
+                            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.2em; margin-top: 0.3em;">
+                                <div style="background: white; padding: 0.25em; border-radius: 2px; text-align: center; font-size: 0.9em;">
+                                    ⚙️<br><span class="tiny">Step Func</span>
+                                </div>
+                                <div style="background: white; padding: 0.25em; border-radius: 2px; text-align: center; font-size: 0.9em;">
+                                    ⏰<br><span class="tiny">EventBridge</span>
+                                </div>
+                                <div style="background: white; padding: 0.25em; border-radius: 2px; text-align: center; font-size: 0.9em;">
+                                    📊<br><span class="tiny">CloudWatch</span>
+                                </div>
+                                <div style="background: white; padding: 0.25em; border-radius: 2px; text-align: center; font-size: 0.9em;">
+                                    λ<br><span class="tiny">Restart</span>
                                 </div>
                             </div>
+                        </div>
+                        
+                        <div style="background: rgba(231,76,60,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--alert-red); text-align: center;">
+                            <strong>📧 ALERTS</strong><br>
+                            <div style="font-size: 1.2em; margin-top: 0.2em;">🔔</div>
+                            <span class="tiny">SNS → Email</span><br>
+                            <span class="tiny">DQ Failures</span>
                         </div>
                     </div>
                 </div>
                 
-                <div class="info-box">
-                    <strong>VPC:</strong> 2 AZs • Single NAT Gateway • Private subnets for MSK/EMR • IAM auth throughout
-                </div>
+                <ul class="key-points" style="list-style: none; padding: 0; margin-top: 0.3em;">
+                    <li><span class="icon">✓</span><strong>VPC:</strong> 2 Availability Zones with private subnets</li>
+                    <li><span class="icon">✓</span><strong>NAT:</strong> Single NAT Gateway (cost-optimized)</li>
+                    <li><span class="icon">✓</span><strong>Security:</strong> IAM auth throughout all services</li>
+                </ul>
                 
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
@@ -939,7 +1093,282 @@
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 6: Data Quality Gates ==================== -->
+            <!-- ==================== SLIDE 6: Data Pipeline Flow ==================== -->
+            <section>
+                <h2>Data Pipeline Flow</h2>
+                <p class="tiny">End-to-end data journey from Wikipedia to Gold analytics — continuous processing</p>
+                
+                <div class="diagram-container" style="font-size: 0.55em; flex: 1; display: flex; flex-direction: column;">
+                    <!-- Pipeline Flow Visualization -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 2fr; gap: 0.6em; height: 100%;">
+                        
+                        <!-- Left: Ingestion Path -->
+                        <div style="display: flex; flex-direction: column; gap: 0.3em;">
+                            <div style="text-align: center; font-weight: 600; color: var(--nf-charcoal); padding: 0.2em; background: var(--nf-light-gray); border-radius: 3px;">INGESTION</div>
+                            
+                            <div style="background: #E8E8E8; padding: 0.4em; border-radius: 3px; text-align: center; border: 2px dashed #888;">
+                                <div style="font-size: 1.3em;">🌐</div>
+                                <strong>Wikipedia EventStreams</strong><br>
+                                <span class="tiny">stream.wikimedia.org</span><br>
+                                <span class="tiny" style="color: var(--nf-orange);">~500-700 edits/min</span>
+                            </div>
+                            
+                            <div style="text-align: center; font-size: 1.2em; color: var(--nf-medium-gray);">↓ <span style="font-size: 0.6em;">SSE Stream</span></div>
+                            
+                            <div style="background: rgba(232,90,35,0.1); padding: 0.4em; border-radius: 3px; text-align: center; border: 2px solid var(--nf-orange);">
+                                <div style="font-size: 1.3em;">🐳</div>
+                                <strong>ECS Fargate Producer</strong><br>
+                                <span class="tiny">Python + Kafka IAM auth</span><br>
+                                <span class="tiny">JSON serialization</span>
+                            </div>
+                            
+                            <div style="text-align: center; font-size: 1.2em; color: var(--nf-medium-gray);">↓ <span style="font-size: 0.6em;">Kafka Produce</span></div>
+                            
+                            <div style="background: rgba(52,152,219,0.1); padding: 0.4em; border-radius: 3px; text-align: center; border: 2px solid var(--info-blue);">
+                                <div style="font-size: 1.3em;">📨</div>
+                                <strong>MSK Kafka</strong><br>
+                                <span class="tiny">Topics: raw-events, dlq-events</span><br>
+                                <span class="tiny">3-partition, replication=2</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Middle: Streaming Path -->
+                        <div style="display: flex; flex-direction: column; gap: 0.3em;">
+                            <div style="text-align: center; font-weight: 600; color: var(--nf-charcoal); padding: 0.2em; background: var(--nf-light-gray); border-radius: 3px;">STREAMING</div>
+                            
+                            <div style="text-align: center; font-size: 1.2em; color: var(--info-blue); margin-top: 2em;">← <span style="font-size: 0.6em;">Kafka Consume</span></div>
+                            
+                            <div style="background: linear-gradient(135deg, rgba(205,127,50,0.15), rgba(205,127,50,0.05)); padding: 0.5em; border-radius: 4px; border: 2px solid var(--bronze);">
+                                <div style="text-align: center;">
+                                    <div style="font-size: 1.3em;">🥉</div>
+                                    <strong>Bronze Streaming Job</strong>
+                                </div>
+                                <div style="margin-top: 0.3em; font-size: 0.9em;">
+                                    <div style="background: white; padding: 0.2em; border-radius: 2px; margin: 0.15em 0;">
+                                        ⏱️ Trigger: <strong>3-min</strong> micro-batches
+                                    </div>
+                                    <div style="background: white; padding: 0.2em; border-radius: 2px; margin: 0.15em 0;">
+                                        🌊 Watermark: <strong>10-min</strong> delay
+                                    </div>
+                                    <div style="background: white; padding: 0.2em; border-radius: 2px; margin: 0.15em 0;">
+                                        🔄 MERGE INTO (upsert)
+                                    </div>
+                                    <div style="background: white; padding: 0.2em; border-radius: 2px; margin: 0.15em 0;">
+                                        ✅ Exactly-once semantics
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div style="text-align: center; font-size: 1.2em; color: var(--gold);">↓ <span style="font-size: 0.6em;">S3 Tables</span></div>
+                            
+                            <div style="background: rgba(212,175,55,0.1); padding: 0.4em; border-radius: 3px; border: 2px solid var(--gold); text-align: center;">
+                                <div style="font-size: 1.3em;">🧊</div>
+                                <strong>bronze.raw_events</strong><br>
+                                <span class="tiny">Iceberg • (event_date, event_hour)</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Right: Batch Processing - Vertical Flow -->
+                        <div style="display: flex; flex-direction: column; gap: 0.25em;">
+                            <div style="text-align: center; font-weight: 600; color: var(--nf-charcoal); padding: 0.25em; background: var(--nf-light-gray); border-radius: 3px;">BATCH PIPELINE (Step Functions)</div>
+                            
+                            <!-- Vertical Pipeline Flow -->
+                            <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.15em 0.4em; align-items: center; padding: 0.3em;">
+                                
+                                <!-- Row 1: Bronze DQ -->
+                                <div style="background: var(--dq-green); color: white; padding: 0.3em 0.6em; border-radius: 3px; text-align: center; font-size: 0.9em; min-width: 90px;">
+                                    🔍 Bronze DQ
+                                </div>
+                                <div style="background: white; padding: 0.2em 0.4em; border-radius: 2px; border: 1px solid #ddd; font-size: 0.8em;">
+                                    <strong>Completeness</strong>: event_id 100% &nbsp;|&nbsp; <strong>Timeliness</strong>: 95% ≤60s
+                                </div>
+                                
+                                <!-- Arrow -->
+                                <div style="text-align: center; color: var(--dq-green); font-size: 0.9em;">↓ Pass</div>
+                                <div></div>
+                                
+                                <!-- Row 2: Silver Job -->
+                                <div style="background: linear-gradient(135deg, #8E8E8E, #666666); color: white; padding: 0.3em 0.6em; border-radius: 3px; text-align: center; min-width: 90px;">
+                                    🥈 Silver Job
+                                </div>
+                                <div style="background: white; padding: 0.2em 0.4em; border-radius: 2px; border: 1px solid #ddd; font-size: 0.8em;">
+                                    <strong>Deduplication</strong>: by event_id &nbsp;|&nbsp; <strong>Region mapping</strong>: domain → region
+                                </div>
+                                
+                                <!-- Arrow -->
+                                <div style="text-align: center; color: var(--silver); font-size: 0.9em;">↓</div>
+                                <div></div>
+                                
+                                <!-- Row 3: Silver DQ -->
+                                <div style="background: var(--dq-green); color: white; padding: 0.3em 0.6em; border-radius: 3px; text-align: center; font-size: 0.9em; min-width: 90px;">
+                                    🔍 Silver DQ
+                                </div>
+                                <div style="background: white; padding: 0.2em 0.4em; border-radius: 2px; border: 1px solid #ddd; font-size: 0.8em;">
+                                    <strong>Accuracy</strong>: length_delta 99% &nbsp;|&nbsp; <strong>Drift detection</strong>: null rate
+                                </div>
+                                
+                                <!-- Arrow -->
+                                <div style="text-align: center; color: var(--dq-green); font-size: 0.9em;">↓ Pass</div>
+                                <div></div>
+                                
+                                <!-- Row 4: Gold Job -->
+                                <div style="background: linear-gradient(135deg, #D4AF37, #B8962E); color: white; padding: 0.3em 0.6em; border-radius: 3px; text-align: center; min-width: 90px;">
+                                    🥇 Gold Job
+                                </div>
+                                <div style="background: white; padding: 0.2em 0.4em; border-radius: 2px; border: 1px solid #ddd; font-size: 0.8em;">
+                                    <strong>Aggregations</strong>: hourly_stats &nbsp;|&nbsp; <strong>Risk scores</strong>: 0-100 scale
+                                </div>
+                                
+                                <!-- Arrow -->
+                                <div style="text-align: center; color: var(--gold); font-size: 0.9em;">↓</div>
+                                <div></div>
+                                
+                                <!-- Row 5: Gold DQ -->
+                                <div style="background: var(--dq-green); color: white; padding: 0.3em 0.6em; border-radius: 3px; text-align: center; font-size: 0.9em; min-width: 90px;">
+                                    🔍 Gold DQ
+                                </div>
+                                <div style="background: white; padding: 0.2em 0.4em; border-radius: 2px; border: 1px solid #ddd; font-size: 0.8em;">
+                                    <strong>Upstream</strong>: validation &nbsp;|&nbsp; <strong>Aggregation</strong>: consistency
+                                </div>
+                                
+                                <!-- Arrow -->
+                                <div style="text-align: center; color: var(--dq-green); font-size: 0.9em;">↓ Pass</div>
+                                <div></div>
+                                
+                                <!-- Row 6: Wait & Loop -->
+                                <div style="display: flex; gap: 0.3em; align-items: center;">
+                                    <div style="background: var(--nf-teal); color: white; padding: 0.25em 0.4em; border-radius: 3px; text-align: center; font-size: 0.85em;">
+                                        ⏱️ Wait 10m
+                                    </div>
+                                    <span style="font-size: 0.8em;">→</span>
+                                    <div style="background: var(--info-blue); color: white; padding: 0.25em 0.4em; border-radius: 3px; text-align: center; font-size: 0.85em;">
+                                        🔄 Loop
+                                    </div>
+                                </div>
+                                <div style="font-size: 0.75em; color: var(--nf-medium-gray);">Self-looping continuous execution</div>
+                            </div>
+                            
+                            <div style="text-align: center; font-size: 0.8em; color: var(--alert-red); padding: 0.2em; background: rgba(231,76,60,0.08); border-radius: 3px;">
+                                ❌ Any DQ Failure → SNS Alert → Pipeline Stops
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="slide-footer">
+                    <span class="brand">WikiStream</span>
+                    <span>Data Pipeline Flow</span>
+                </div>
+            </section>
+            
+            <!-- ==================== SLIDE 7: Processing Deep Dive ==================== -->
+            <section>
+                <h2>Processing: EMR Serverless Deep Dive</h2>
+                <p style="font-size: 0.7em; color: var(--nf-medium-gray); margin-bottom: 0.4em;">Spark 3.5 on emr-7.12.0 — Iceberg 1.10.0 integration with S3 Tables</p>
+                
+                <!-- Three Job Cards - Spacious Layout -->
+                <div class="three-col" style="font-size: 0.75em; gap: 0.8em; flex: 1;">
+                    
+                    <!-- Bronze Streaming -->
+                    <div style="background: linear-gradient(135deg, rgba(205,127,50,0.12), rgba(205,127,50,0.03)); padding: 0.6em; border-radius: 5px; border-left: 4px solid var(--bronze); display: flex; flex-direction: column;">
+                        <h3 style="color: var(--bronze); margin: 0 0 0.4em 0; font-size: 1.05em;">🥉 Bronze Streaming</h3>
+                        <code style="font-size: 0.8em; margin-bottom: 0.4em;">bronze_streaming_job.py</code>
+                        
+                        <table class="data-table" style="font-size: 0.95em; margin-bottom: 0.5em;">
+                            <tr><td><strong>Type</strong></td><td>Structured Streaming</td></tr>
+                            <tr><td><strong>Trigger</strong></td><td>3-min micro-batches</td></tr>
+                            <tr><td><strong>Watermark</strong></td><td>10 min (late data)</td></tr>
+                            <tr><td><strong>Write</strong></td><td>MERGE INTO (upsert)</td></tr>
+                            <tr><td><strong>Resources</strong></td><td>4 vCPU continuous</td></tr>
+                        </table>
+                        
+                        <div style="font-size: 0.9em; margin-top: auto;">
+                            <strong>Key Operations:</strong>
+                            <ul style="margin: 0.2em 0 0 1em; padding: 0; line-height: 1.4;">
+                                <li>Deterministic event_id</li>
+                                <li>Kafka offset tracking</li>
+                                <li>Checkpoint management</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <!-- Silver Batch -->
+                    <div style="background: linear-gradient(135deg, rgba(142,142,142,0.12), rgba(142,142,142,0.03)); padding: 0.6em; border-radius: 5px; border-left: 4px solid var(--silver); display: flex; flex-direction: column;">
+                        <h3 style="color: var(--silver); margin: 0 0 0.4em 0; font-size: 1.05em;">🥈 Silver Batch</h3>
+                        <code style="font-size: 0.8em; margin-bottom: 0.4em;">silver_batch_job.py</code>
+                        
+                        <table class="data-table" style="font-size: 0.95em; margin-bottom: 0.5em;">
+                            <tr><td><strong>Type</strong></td><td>Batch (Step Func)</td></tr>
+                            <tr><td><strong>Timeout</strong></td><td>900s (15 min)</td></tr>
+                            <tr><td><strong>Input</strong></td><td>bronze.raw_events</td></tr>
+                            <tr><td><strong>Output</strong></td><td>silver.cleaned_events</td></tr>
+                            <tr><td><strong>Resources</strong></td><td>4 vCPU on-demand</td></tr>
+                        </table>
+                        
+                        <div style="font-size: 0.9em; margin-top: auto;">
+                            <strong>Transformations:</strong>
+                            <ul style="margin: 0.2em 0 0 1em; padding: 0; line-height: 1.4;">
+                                <li>Deduplication by event_id</li>
+                                <li>Region mapping</li>
+                                <li>Anonymity detection</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <!-- Gold Batch -->
+                    <div style="background: linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); padding: 0.6em; border-radius: 5px; border-left: 4px solid var(--gold); display: flex; flex-direction: column;">
+                        <h3 style="color: var(--gold); margin: 0 0 0.4em 0; font-size: 1.05em;">🥇 Gold Batch</h3>
+                        <code style="font-size: 0.8em; margin-bottom: 0.4em;">gold_batch_job.py</code>
+                        
+                        <table class="data-table" style="font-size: 0.95em; margin-bottom: 0.5em;">
+                            <tr><td><strong>Type</strong></td><td>Batch (Step Func)</td></tr>
+                            <tr><td><strong>Timeout</strong></td><td>900s (15 min)</td></tr>
+                            <tr><td><strong>Input</strong></td><td>silver.cleaned_events</td></tr>
+                            <tr><td><strong>Output</strong></td><td>3 Gold tables</td></tr>
+                            <tr><td><strong>Resources</strong></td><td>4 vCPU on-demand</td></tr>
+                        </table>
+                        
+                        <div style="font-size: 0.9em; margin-top: auto;">
+                            <strong>Aggregations:</strong>
+                            <ul style="margin: 0.2em 0 0 1em; padding: 0; line-height: 1.4;">
+                                <li>hourly_stats by domain</li>
+                                <li>risk_scores by user</li>
+                                <li>daily_analytics_summary</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Bottom Config Tables - More Spacious -->
+                <div class="two-col" style="margin-top: 0.6em; font-size: 0.75em; gap: 1em;">
+                    <div style="background: var(--nf-light-gray); padding: 0.5em; border-radius: 4px;">
+                        <h3 style="margin: 0 0 0.3em 0; font-size: 1em;">🧊 Iceberg Configuration</h3>
+                        <table class="data-table" style="font-size: 0.95em;">
+                            <tr><td><strong>Format</strong></td><td>Version 2 (merge-on-read)</td></tr>
+                            <tr><td><strong>Compression</strong></td><td>ZSTD</td></tr>
+                            <tr><td><strong>File Size</strong></td><td>512 MB (compaction target)</td></tr>
+                            <tr><td><strong>Snapshots</strong></td><td>48 hours retention</td></tr>
+                        </table>
+                    </div>
+                    
+                    <div style="background: var(--nf-light-gray); padding: 0.5em; border-radius: 4px;">
+                        <h3 style="margin: 0 0 0.3em 0; font-size: 1em;">⚡ EMR Serverless Config</h3>
+                        <table class="data-table" style="font-size: 0.95em;">
+                            <tr><td><strong>Release</strong></td><td>emr-7.12.0 (Spark 3.5)</td></tr>
+                            <tr><td><strong>Quota</strong></td><td>16 vCPU total</td></tr>
+                            <tr><td><strong>Max Concurrent</strong></td><td>8 vCPU (Bronze + batch)</td></tr>
+                            <tr><td><strong>Auto-stop</strong></td><td>5 min idle timeout</td></tr>
+                        </table>
+                    </div>
+                </div>
+                
+                <div class="slide-footer">
+                    <span class="brand">WikiStream</span>
+                    <span>Processing Deep Dive</span>
+                </div>
+            </section>
+            
+            <!-- ==================== SLIDE 8: Data Quality Gates ==================== -->
             <section>
                 <h2>Data Quality Gates</h2>
                 <p class="tiny">AWS Deequ 2.0.7 — Gates block downstream processing on failure</p>
@@ -1021,9 +1450,11 @@
                     </tr>
                 </table>
                 
-                <div class="info-box success" style="margin-top: 0.3em;">
-                    <strong>Audit Trail:</strong> All DQ results logged to <code>dq_audit.quality_results</code> Iceberg table with evidence JSON
-                </div>
+                <ul class="key-points" style="list-style: none; padding: 0; margin-top: 0.4em;">
+                    <li><span class="icon">✓</span><strong>Audit Trail:</strong> All DQ results logged to <code>dq_audit.quality_results</code></li>
+                    <li><span class="icon">✓</span><strong>Evidence:</strong> Full JSON evidence stored for each check</li>
+                    <li><span class="icon">✓</span><strong>Trend Analysis:</strong> Historical data enables drift detection</li>
+                </ul>
                 
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
@@ -1034,7 +1465,7 @@
             <!-- ==================== SLIDE 7: Step Functions Pipeline ==================== -->
             <section>
                 <h2>Step Functions: Batch Pipeline</h2>
-                <p class="tiny">Self-looping continuous execution pattern — wikistream-dev-batch-pipeline</p>
+                <p style="font-size: 0.7em; color: var(--nf-medium-gray); margin-bottom: 0.4em;">Orchestrates batch processing with DQ gates comprising Medallion architecture — <b>self-loops</b> every 10 minutes after successful completion</p>
                 
                 <div class="two-col">
                     <div>
@@ -1073,8 +1504,6 @@
                             <tr style="background: rgba(232,90,35,0.08);"><td><strong>Total cycle</strong></td><td><strong>~25-35 min</strong></td></tr>
                         </table>
                         
-                        <h3 style="margin-top: 0.5em;">Job Timeout</h3>
-                        <p style="font-size: 0.75em;"><strong>900 sec (15 min)</strong> per EMR job</p>
                         
                         <h3 style="margin-top: 0.4em;">Resource (16 vCPU quota)</h3>
                         <table class="data-table resource-table">
@@ -1094,7 +1523,7 @@
             <!-- ==================== SLIDE 8: Infrastructure Lifecycle ==================== -->
             <section>
                 <h2>Infrastructure Lifecycle</h2>
-                <p class="tiny">Terraform IaC (~2600 lines) with idempotent create/destroy scripts</p>
+                <p class="tiny">Terraform IaC with idempotent create/destroy scripts for ease of implementation during development - <b>saving AWS bill</b> from running resources continuously</p>
                 
                 <div class="lifecycle-flow">
                     <div class="lifecycle-box" style="border-color: var(--dq-green);">
@@ -1158,14 +1587,14 @@
                 <h2>Data Model: Medallion Layers</h2>
                 <p class="tiny">S3 Tables with Apache Iceberg 1.10.0 — Format Version 2</p>
                 
-                <div class="three-col">
+                <div class="three-col" style="gap: 0.6em;">
                     <div>
-                        <h3 style="color: var(--bronze);">🥉 Bronze: Raw</h3>
-                        <div style="background: rgba(205,127,50,0.08); padding: 0.4em; border-radius: 3px; font-size: 0.65em;">
+                        <h3 style="color: var(--bronze); font-size: 1.1em;">🥉 Bronze: Raw</h3>
+                        <div style="background: rgba(205,127,50,0.08); padding: 0.5em; border-radius: 3px; font-size: 0.8em;">
                             <strong>Table:</strong> <code>bronze.raw_events</code><br>
                             <strong>Partition:</strong> <code>(event_date, event_hour)</code><br>
                             <strong>Key Fields:</strong>
-                            <ul style="margin: 0.2em 0 0 0.8em; padding: 0;">
+                            <ul style="margin: 0.3em 0 0 0.8em; padding: 0;">
                                 <li>event_id (PK, deterministic)</li>
                                 <li>kafka_* metadata</li>
                                 <li>domain, title, user</li>
@@ -1176,12 +1605,12 @@
                     </div>
                     
                     <div>
-                        <h3 style="color: var(--silver);">🥈 Silver: Cleaned</h3>
-                        <div style="background: rgba(142,142,142,0.08); padding: 0.4em; border-radius: 3px; font-size: 0.65em;">
+                        <h3 style="color: var(--silver); font-size: 1.1em;">🥈 Silver: Cleaned</h3>
+                        <div style="background: rgba(142,142,142,0.08); padding: 0.5em; border-radius: 3px; font-size: 0.8em;">
                             <strong>Table:</strong> <code>silver.cleaned_events</code><br>
                             <strong>Partition:</strong> <code>(event_date, region)</code><br>
                             <strong>Key Fields:</strong>
-                            <ul style="margin: 0.2em 0 0 0.8em; padding: 0;">
+                            <ul style="margin: 0.3em 0 0 0.8em; padding: 0;">
                                 <li>event_id (PK)</li>
                                 <li>region (derived from domain)</li>
                                 <li>language (derived)</li>
@@ -1192,41 +1621,65 @@
                     </div>
                     
                     <div>
-                        <h3 style="color: var(--gold);">🥇 Gold: Aggregated</h3>
-                        <div style="background: rgba(212,175,55,0.08); padding: 0.4em; border-radius: 3px; font-size: 0.65em;">
+                        <h3 style="color: var(--gold); font-size: 1.1em;">🥇 Gold: Aggregated</h3>
+                        <div style="background: rgba(212,175,55,0.08); padding: 0.5em; border-radius: 3px; font-size: 0.8em;">
                             <strong>Tables:</strong><br>
                             • <code>gold.hourly_stats</code><br>
                             • <code>gold.risk_scores</code><br>
                             • <code>gold.daily_analytics_summary</code><br>
                             <strong>Key Metrics:</strong>
-                            <ul style="margin: 0.2em 0 0 0.8em; padding: 0;">
+                            <ul style="margin: 0.3em 0 0 0.8em; padding: 0;">
                                 <li>total_events, unique_users</li>
                                 <li>bot_percentage, risk_score</li>
                             </ul>
                         </div>
                     </div>
                 </div>
+
+                <!-- DQ Audit Tables Section -->
+                <div style="background: var(--nf-light-gray); border-radius: 4px; padding: 0.4em; margin-top: 0.5em;">
+                    <h3 style="margin: 0 0 0.3em 0; font-size: 0.8em; color: var(--dq-green);">🔍 DQ Audit Tables</h3>
+                    <div class="two-col" style="gap: 1em; margin-top: 0.3em;">
+                        <div style="background: white; padding: 0.35em; border-radius: 3px; border-left: 3px solid var(--dq-green);">
+                            <strong style="font-size: 0.7em; display: block; margin-bottom: 0.2em;">dq_audit.quality_results</strong>
+                            <p style="margin: 0; font-size: 0.6em; color: var(--nf-medium-gray);">
+                                Records all DQ gate check results<br>
+                                <code>run_id, layer, check_name, status, metric_value, evidence</code>
+                            </p>
+                        </div>
+                        <div style="background: white; padding: 0.35em; border-radius: 3px; border-left: 3px solid var(--info-blue);">
+                            <strong style="font-size: 0.7em; display: block; margin-bottom: 0.2em;">dq_audit.profile_metrics</strong>
+                            <p style="margin: 0; font-size: 0.6em; color: var(--nf-medium-gray);">
+                                Data profiling for drift detection<br>
+                                <code>column_name, null_rate, distinct_count, mean_value, percentiles</code>
+                            </p>
+                        </div>
+                    </div>
+                </div>
                 
-                <div class="two-col" style="margin-top: 0.4em;">
+                <div class="two-col" style="margin-top: 0.5em; gap: 1em;">
                     <div>
-                        <h3>Iceberg Table Properties</h3>
-                        <table class="data-table">
-                            <tr><td>Format Version</td><td>2 (merge-on-read)</td></tr>
+                        <h3 style="font-size: 0.8em;">🧊 S3 Tables Config</h3>
+                        <table class="data-table" style="font-size: 0.7em;">
+                            <tr><td>Format</td><td>2 (merge-on-read)</td></tr>
                             <tr><td>Compression</td><td>ZSTD</td></tr>
-                            <tr><td>Compaction Target</td><td>512 MB</td></tr>
-                            <tr><td>Snapshot Retention</td><td>48 hours (dev)</td></tr>
+                            <tr><td>Compaction</td><td>512 MB</td></tr>
+                            <tr><td>Snapshot</td><td>48 hours</td></tr>
                         </table>
                     </div>
                     <div>
-                        <h3>Risk Scoring Logic</h3>
-                        <table class="data-table" style="font-size: 0.65em;">
-                            <tr><th>Factor</th><th>Threshold</th><th>Pts</th></tr>
-                            <tr><td>High edit velocity</td><td>&gt;50 edits/hour</td><td>40</td></tr>
-                            <tr><td>Large deletions</td><td>&gt;3 count</td><td>30</td></tr>
-                            <tr><td>Anonymous activity</td><td>&gt;50%</td><td>20</td></tr>
-                            <tr><td>Cross-domain</td><td>&gt;5 domains</td><td>10</td></tr>
+                        <h3 style="font-size: 0.8em;">📊 Risk Scoring</h3>
+                        <table class="data-table" style="font-size: 0.7em;">
+                            <tr><td>High velocity</td><td>&gt;50/hr</td><td>+40</td></tr>
+                            <tr><td>Large deletions</td><td>&gt;3</td><td>+30</td></tr>
+                            <tr><td>Anonymous</td><td>&gt;50%</td><td>+20</td></tr>
+                            <tr><td>Cross-domain</td><td>&gt;5</td><td>+10</td></tr>
                         </table>
-                        <p class="tiny"><strong>Levels:</strong> HIGH (70+) • MEDIUM (40-69) • LOW (0-39)</p>
+                        <p class="tiny" style="margin: 0.2em 0 0 0; font-size: 0.6em;">
+                            <strong style="color: var(--alert-red);">HIGH</strong> (70+) • 
+                            <strong style="color: var(--gold);">MEDIUM</strong> (40-69) • 
+                            <strong style="color: var(--dq-green);">LOW</strong> (0-39)
+                        </p>
                     </div>
                 </div>
                 
@@ -1286,19 +1739,18 @@
                     <tr>
                         <td><strong>IaC</strong></td>
                         <td>Terraform 1.6+</td>
-                        <td>Full AWS coverage • State mgmt • 2600+ lines</td>
+                        <td>Full AWS coverage • State management (S3, DynamoDB)</td>
                         <td>CloudFormation</td>
                     </tr>
                 </table>
                 
-                <div class="info-box" style="margin-top: 0.5em;">
-                    <strong>Key Principles:</strong>
-                    ✓ Serverless-first &nbsp;•&nbsp;
-                    ✓ Pay-per-use &nbsp;•&nbsp;
-                    ✓ Fail-fast on DQ issues &nbsp;•&nbsp;
-                    ✓ Self-healing &nbsp;•&nbsp;
-                    ✓ Evidence-rich audit
-                </div>
+                <ul class="key-points" style="list-style: none; padding: 0; margin-bottom: 0.5em;">
+                    <li><span class="icon">✓</span><strong>Serverless-first:</strong> Zero idle cost for batch processing</li>
+                    <li><span class="icon">✓</span><strong>Pay-per-use:</strong> Only pay during job execution</li>
+                    <li><span class="icon">✓</span><strong>Fail-fast:</strong> DQ gates block downstream on failure</li>
+                    <li><span class="icon">✓</span><strong>Self-healing:</strong> Lambda auto-restart on health check failure</li>
+                    <li><span class="icon">✓</span><strong>Audit trail:</strong> Evidence-rich DQ logging for compliance</li>
+                </ul>
                 
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
@@ -1308,7 +1760,7 @@
             
             <!-- ==================== SLIDE 11: Cost Analysis ==================== -->
             <section>
-                <h2>Cost Analysis & Optimization</h2>
+                <h2>Cost Analysis & Optimization*</h2>
                 
                 <div class="two-col">
                     <div>
@@ -1367,7 +1819,7 @@
                 <div class="two-col">
                     <div>
                         <h3>✅ Implementation Complete</h3>
-                        <ul class="checklist">
+                <ul class="checklist">
                             <li><strong>Real-time Ingestion:</strong> Kafka + DLQ for malformed</li>
                             <li><strong>Medallion Architecture:</strong> Bronze/Silver/Gold + Audit</li>
                             <li><strong>Idempotent:</strong> MERGE INTO with deterministic ID</li>
@@ -1376,7 +1828,7 @@
                             <li><strong>Auto-Recovery:</strong> Lambda restarts Bronze</li>
                             <li><strong>Observability:</strong> CloudWatch + SNS alerts</li>
                             <li><strong>IaC:</strong> Full Terraform (~2600 lines)</li>
-                        </ul>
+                </ul>
                     </div>
                     
                     <div>
@@ -1385,19 +1837,19 @@
                             <div class="stat-box" style="flex: 1; min-width: 80px;">
                                 <span class="number">≤3min</span>
                                 <span class="label">Bronze SLA</span>
-                            </div>
+                    </div>
                             <div class="stat-box" style="flex: 1; min-width: 80px;">
                                 <span class="number">≤35min</span>
                                 <span class="label">E2E SLA</span>
-                            </div>
+                    </div>
                             <div class="stat-box" style="flex: 1; min-width: 80px;">
                                 <span class="number">95%+</span>
                                 <span class="label">DQ Pass</span>
-                            </div>
+                    </div>
                             <div class="stat-box" style="flex: 1; min-width: 80px;">
                                 <span class="number">~$260</span>
                                 <span class="label">Monthly</span>
-                            </div>
+                    </div>
                         </div>
                         
                         <h3 style="margin-top: 0.5em;">🛠️ Skills Demonstrated</h3>
@@ -1421,41 +1873,58 @@
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 13: Thank You ==================== -->
-            <section class="title-slide">
-                <h2 style="border: none; display: block;">Thank You</h2>
-                <div class="accent-bar" style="margin: 0 auto 0.6em;"></div>
+            <!-- ==================== SLIDE: Thank You & Discussion ==================== -->
+            <section>
+                <h2 style="text-align: center;">Thank You — Let's Discuss</h2>
+                <p class="tiny" style="text-align: center;">Topics for deeper technical conversation</p>
                 
-                <p style="font-size: 1em; margin-bottom: 0.6em;">Questions & Discussion</p>
-                
-                <div class="tech-grid" style="max-width: 550px; margin: 0 auto; grid-template-columns: repeat(4, 1fr);">
-                    <div class="tech-item"><span class="name">MSK Kafka</span><span class="version">KRaft 3.9</span></div>
-                    <div class="tech-item"><span class="name">EMR</span><span class="version">Spark 3.5</span></div>
-                    <div class="tech-item"><span class="name">S3 Tables</span><span class="version">Iceberg 1.10</span></div>
-                    <div class="tech-item"><span class="name">Step Func</span><span class="version">Self-loop</span></div>
-                    <div class="tech-item"><span class="name">EventBridge</span><span class="version">Scheduler</span></div>
-                    <div class="tech-item"><span class="name">Deequ</span><span class="version">2.0.7</span></div>
-                    <div class="tech-item"><span class="name">Terraform</span><span class="version">1.6+</span></div>
-                    <div class="tech-item"><span class="name">Python</span><span class="version">3.12</span></div>
+                <div class="discussion-grid">
+                    <div class="discussion-item" style="border-left-color: var(--bronze);">
+                        <h4>🥉 Why 3-min Micro-batches for Bronze?</h4>
+                        <p>Trade-off between latency and Iceberg snapshot overhead. Shorter batches = more snapshots = higher compaction cost. 3 min balances freshness vs. maintenance.</p>
+                    </div>
+                    
+                    <div class="discussion-item" style="border-left-color: var(--dq-green);">
+                        <h4>🔍 DQ Gates: Why Block Instead of Alert-Only?</h4>
+                        <p>Fail-fast prevents cascading bad data to Gold. Better to stop and fix at source than propagate corruption. Audit trail enables root cause analysis.</p>
                 </div>
                 
-                <div style="margin-top: 0.8em;">
-                    <p style="font-size: 0.8em; color: var(--nf-medium-gray);">
-                        <strong>Key Differentiators:</strong><br>
-                        Self-looping batch • DQ gates that block downstream • Serverless-first • ~$260/mo
-                    </p>
+                    <div class="discussion-item" style="border-left-color: var(--nf-teal);">
+                        <h4>🔄 Self-Looping vs. EventBridge Schedule?</h4>
+                        <p>Self-loop ensures previous cycle completes before next starts. Fixed schedules risk overlap or gaps. 10-min wait between cycles prevents resource contention.</p>
                 </div>
                 
-                <div style="margin-top: 0.8em; padding: 0.6em; background: var(--nf-light-gray); border-radius: 4px; display: inline-block;">
-                    <p style="font-size: 0.85em; margin: 0;">
-                        📁 <a href="https://github.com/mdshihabullah/wikistream-event-data-pipeline/" target="_blank" style="color: var(--nf-orange);">github.com/mdshihabullah/wikistream-event-data-pipeline</a><br>
-                        <span style="font-size: 0.75em; color: var(--nf-medium-gray);">Source code • Terraform IaC • Architecture docs</span>
-                    </p>
+                    <div class="discussion-item" style="border-left-color: var(--gold);">
+                        <h4>💰 Serverless Cost vs. Provisioned?</h4>
+                        <p>At ~$260/mo workload, serverless wins. Break-even around $500/mo continuous. EMR Serverless cold start (5-8 min) is acceptable for batch; 15-min timeout accounts for this.</p>
+                    </div>
+                    
+                    <div class="discussion-item" style="border-left-color: var(--info-blue);">
+                        <h4>🧊 Why Iceberg v2 on S3 Tables?</h4>
+                        <p>Merge-on-read for upserts, ACID transactions, time-travel for debugging, auto-compaction. S3 Tables = AWS-managed catalog, no Glue overhead.</p>
+                    </div>
+                    
+                    <div class="discussion-item" style="border-left-color: var(--alert-red);">
+                        <h4>🚨 Failure Recovery Strategies?</h4>
+                        <p>Bronze: Lambda auto-restart on health check failure. Batch: Pipeline stops on DQ failure → manual fix → restart. Kafka replay capability for Bronze reprocessing.</p>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 0.4em; display: flex; justify-content: center; gap: 1em; align-items: center;">
+                    <div style="padding: 0.4em 0.6em; background: var(--nf-light-gray); border-radius: 4px; text-align: center;">
+                        <p style="font-size: 0.75em; margin: 0;">
+                            📁 <a href="https://github.com/mdshihabullah/wikistream-event-data-pipeline/" target="_blank" style="color: var(--nf-orange);">github.com/mdshihabullah/wikistream-event-data-pipeline</a>
+                        </p>
+                    </div>
+                    <div style="font-size: 0.65em; color: var(--nf-medium-gray); text-align: center;">
+                        <strong style="color: var(--nf-charcoal);">Key Differentiators:</strong><br>
+                        Self-looping batch • Fail-fast DQ • Serverless-first • ~$260/mo
+                    </div>
                 </div>
                 
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
-                    <span>Data Engineering Portfolio</span>
+                    <span>Discussion Topics</span>
                 </div>
             </section>
             
@@ -1479,9 +1948,32 @@
             margin: 0.04,
             minScale: 0.5,
             maxScale: 2.5,
-            
-            // Disable auto-animate for cleaner transitions
             autoAnimate: false,
+        });
+        
+        // Add watermark to all slides that don't have one
+        const watermarkHTML = `
+            <div class="watermark">
+                <a href="https://www.linkedin.com/in/shihabullah/" target="_blank" title="Connect on LinkedIn">
+                    <div class="author-info">
+                        <div class="author-name">Shihab Ullah</div>
+                        <div class="author-title">Data Engineer</div>
+                    </div>
+                    <div class="qr-container">
+                        <svg viewBox="0 0 29 29" width="28" height="28">
+                            <rect fill="#fff" x="0" y="0" width="29" height="29"/>
+                            <path fill="#000" d="M0 0h7v1h-7zM8 0h1v1h-1zM10 0h2v1h-2zM14 0h1v1h-1zM17 0h2v1h-2zM22 0h7v1h-7zM0 1h1v1h-1zM6 1h1v1h-1zM8 1h2v1h-2zM11 1h1v1h-1zM14 1h1v1h-1zM16 1h1v1h-1zM18 1h2v1h-2zM22 1h1v1h-1zM28 1h1v1h-1zM0 2h1v1h-1zM2 2h3v1h-3zM6 2h1v1h-1zM10 2h1v1h-1zM12 2h2v1h-2zM15 2h1v1h-1zM17 2h1v1h-1zM19 2h1v1h-1zM22 2h1v1h-1zM24 2h3v1h-3zM28 2h1v1h-1zM0 3h1v1h-1zM2 3h3v1h-3zM6 3h1v1h-1zM8 3h1v1h-1zM11 3h2v1h-2zM14 3h3v1h-3zM18 3h2v1h-2zM22 3h1v1h-1zM24 3h3v1h-3zM28 3h1v1h-1zM0 4h1v1h-1zM2 4h3v1h-3zM6 4h1v1h-1zM9 4h1v1h-1zM12 4h1v1h-1zM14 4h1v1h-1zM17 4h1v1h-1zM19 4h1v1h-1zM22 4h1v1h-1zM24 4h3v1h-3zM28 4h1v1h-1zM0 5h1v1h-1zM6 5h1v1h-1zM10 5h2v1h-2zM15 5h1v1h-1zM17 5h3v1h-3zM22 5h1v1h-1zM28 5h1v1h-1zM0 6h7v1h-7zM8 6h1v1h-1zM10 6h1v1h-1zM12 6h1v1h-1zM14 6h1v1h-1zM16 6h1v1h-1zM18 6h1v1h-1zM20 6h1v1h-1zM22 6h7v1h-7zM9 7h1v1h-1zM11 7h3v1h-3zM15 7h2v1h-2zM18 7h2v1h-2zM0 8h1v1h-1zM3 8h1v1h-1zM6 8h2v1h-2zM10 8h1v1h-1zM13 8h1v1h-1zM15 8h1v1h-1zM17 8h3v1h-3zM21 8h2v1h-2zM25 8h1v1h-1zM27 8h2v1h-2zM1 9h1v1h-1zM3 9h2v1h-2zM7 9h1v1h-1zM9 9h3v1h-3zM13 9h1v1h-1zM18 9h1v1h-1zM20 9h3v1h-3zM24 9h2v1h-2zM27 9h1v1h-1zM0 10h2v1h-2zM3 10h2v1h-2zM6 10h3v1h-3zM11 10h2v1h-2zM14 10h3v1h-3zM18 10h2v1h-2zM21 10h3v1h-3zM25 10h2v1h-2zM28 10h1v1h-1zM0 11h1v1h-1zM3 11h1v1h-1zM5 11h3v1h-3zM9 11h2v1h-2zM13 11h2v1h-2zM16 11h1v1h-1zM18 11h2v1h-2zM21 11h1v1h-1zM24 11h1v1h-1zM26 11h3v1h-3zM0 12h3v1h-3zM6 12h1v1h-1zM8 12h5v1h-5zM14 12h2v1h-2zM18 12h1v1h-1zM21 12h1v1h-1zM23 12h1v1h-1zM25 12h4v1h-4zM0 13h1v1h-1zM3 13h2v1h-2zM7 13h1v1h-1zM11 13h2v1h-2zM17 13h2v1h-2zM20 13h1v1h-1zM23 13h2v1h-2zM26 13h1v1h-1zM28 13h1v1h-1zM1 14h3v1h-3zM5 14h1v1h-1zM7 14h3v1h-3zM13 14h1v1h-1zM15 14h2v1h-2zM18 14h2v1h-2zM22 14h1v1h-1zM24 14h1v1h-1zM26 14h1v1h-1zM1 15h1v1h-1zM3 15h1v1h-1zM7 15h1v1h-1zM9 15h1v1h-1zM12 15h1v1h-1zM14 15h2v1h-2zM17 15h2v1h-2zM20 15h2v1h-2zM24 15h1v1h-1zM26 15h2v1h-2zM0 16h1v1h-1zM2 16h2v1h-2zM6 16h1v1h-1zM8 16h3v1h-3zM12 16h1v1h-1zM14 16h5v1h-5zM20 16h1v1h-1zM23 16h3v1h-3zM27 16h1v1h-1zM0 17h2v1h-2zM3 17h2v1h-2zM6 17h1v1h-1zM9 17h1v1h-1zM11 17h3v1h-3zM16 17h1v1h-1zM19 17h1v1h-1zM21 17h4v1h-4zM26 17h1v1h-1zM0 18h1v1h-1zM3 18h3v1h-3zM7 18h1v1h-1zM9 18h2v1h-2zM12 18h4v1h-4zM17 18h2v1h-2zM21 18h2v1h-2zM25 18h3v1h-3zM0 19h1v1h-1zM2 19h1v1h-1zM5 19h2v1h-2zM9 19h1v1h-1zM12 19h4v1h-4zM17 19h1v1h-1zM20 19h1v1h-1zM22 19h1v1h-1zM24 19h1v1h-1zM27 19h2v1h-2zM0 20h1v1h-1zM2 20h2v1h-2zM5 20h3v1h-3zM10 20h2v1h-2zM14 20h1v1h-1zM16 20h2v1h-2zM19 20h1v1h-1zM22 20h3v1h-3zM26 20h2v1h-2zM8 21h4v1h-4zM14 21h3v1h-3zM18 21h3v1h-3zM22 21h1v1h-1zM24 21h5v1h-5zM0 22h7v1h-7zM8 22h1v1h-1zM10 22h1v1h-1zM12 22h1v1h-1zM17 22h1v1h-1zM19 22h1v1h-1zM22 22h3v1h-3zM27 22h1v1h-1zM0 23h1v1h-1zM6 23h1v1h-1zM8 23h2v1h-2zM12 23h1v1h-1zM14 23h3v1h-3zM22 23h1v1h-1zM24 23h1v1h-1zM26 23h1v1h-1zM28 23h1v1h-1zM0 24h1v1h-1zM2 24h3v1h-3zM6 24h1v1h-1zM9 24h1v1h-1zM11 24h2v1h-2zM15 24h1v1h-1zM17 24h4v1h-4zM22 24h1v1h-1zM24 24h2v1h-2zM27 24h2v1h-2zM0 25h1v1h-1zM2 25h3v1h-3zM6 25h1v1h-1zM8 25h2v1h-2zM11 25h1v1h-1zM14 25h2v1h-2zM18 25h2v1h-2zM23 25h2v1h-2zM26 25h2v1h-2zM0 26h1v1h-1zM2 26h3v1h-3zM6 26h1v1h-1zM11 26h1v1h-1zM13 26h2v1h-2zM16 26h2v1h-2zM19 26h2v1h-2zM22 26h2v1h-2zM25 26h1v1h-1zM27 26h2v1h-2zM0 27h1v1h-1zM6 27h1v1h-1zM8 27h5v1h-5zM15 27h2v1h-2zM18 27h1v1h-1zM20 27h1v1h-1zM23 27h2v1h-2zM26 27h1v1h-1zM0 28h7v1h-7zM10 28h2v1h-2zM14 28h1v1h-1zM17 28h2v1h-2zM20 28h1v1h-1zM22 28h1v1h-1zM24 28h1v1h-1zM27 28h1v1h-1z"/>
+                        </svg>
+                    </div>
+                </a>
+            </div>
+        `;
+        
+        // Add watermark to slides that don't have it
+        document.querySelectorAll('.reveal .slides section').forEach((slide, index) => {
+            if (!slide.querySelector('.watermark') && index > 0) {
+                slide.insertAdjacentHTML('beforeend', watermarkHTML);
+            }
         });
     </script>
 </body>

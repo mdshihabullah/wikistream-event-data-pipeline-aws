@@ -668,8 +668,6 @@ AWS QuickSight dashboards for stakeholder insights (create manually via Console)
 - Bot vs human contributor patterns
 - Platform health score trends
 
-> **Note:** The `quicksight/` folder contains reference JSON specifications for datasets and dashboards. These are not auto-deployed - use them as a guide when creating dashboards manually in the QuickSight Console.
-
 ---
 
 ## Project Structure
