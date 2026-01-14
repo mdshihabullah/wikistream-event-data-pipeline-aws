@@ -137,64 +137,103 @@ DQ checks are implemented using **AWS Deequ** (via PyDeequ 1.4.0 wrapper) for sc
 
 ## 📐 Data Flow
 
+```mermaid
+flowchart TB
+    %% External Source
+    WIKI[🌐 Wikipedia<br/>EventStreams<br/>SSE Stream<br/>~500-700 edits/min]
+    
+    %% Ingestion Layer
+    WIKI -->|SSE Stream| PRODUCER[🐳 ECS Fargate<br/>Kafka Producer<br/>Python 3.12<br/>0.25 vCPU<br/>DOMAIN FILTER<br/>Allowed: 18 domains]
+    PRODUCER -->|Produce<br/>IAM Auth| MSK[📨 Amazon MSK<br/>Kafka 3.9.x KRaft<br/>2× kafka.t3.small<br/>Topics: raw-events, dlq-events]
+    
+    %% Streaming Processing
+    MSK -->|Consume| BRONZE[🥉 Bronze Streaming<br/>EMR Serverless<br/>Spark 3.5<br/>3-min micro-batches<br/>MERGE INTO<br/>Exactly-once]
+    BRONZE -->|Write| S3T[📊 S3 Tables<br/>Apache Iceberg 1.10.0<br/>Format v2, ZSTD<br/>Bronze: raw_events]
+    
+    %% Monitoring & Alerting
+    BRONZE -->|Metrics| CW_METRICS[📊 CloudWatch Metrics<br/>BronzeRecordsProcessed<br/>ProcessingLatencyMs<br/>BatchCompleted]
+    CW_METRICS -->|Health Check| CW_ALARM[🚨 CloudWatch Alarm<br/>No records in 10min]
+    CW_ALARM -->|Trigger| LAMBDA[λ Lambda<br/>Auto-Restart<br/>Python 3.12]
+    LAMBDA -->|Restart| BRONZE
+    BRONZE -->|Fail| SNS[📧 SNS Topic<br/>Email Alerts<br/>Pipeline failures]
+    
+    %% Batch Pipeline - Orchestration
+    CW_METRICS -->|Trigger| EB[⏰ EventBridge<br/>Schedule: 15min<br/>Self-loops enabled]
+    EB -->|Orchestrate| SFN[⚙️ Step Functions<br/>Self-Looping Pipeline<br/>~25-35 min cycle]
+    
+    SFN -->|Start| BRONZE_DQ[🔍 Bronze DQ Gate<br/>Deequ 2.0.7<br/>Completeness, Timeliness<br/>Validity, Uniqueness]
+    BRONZE_DQ -->|Read| S3T
+    BRONZE_DQ -->|Pass| SFN
+    BRONZE_DQ -->|Fail| SNS
+    
+    SFN -->|Start| SILVER[🥈 Silver Batch<br/>Deduplication<br/>Region mapping<br/>Anonymity detection<br/>MERGE INTO]
+    SILVER -->|Read/Write| S3T
+    S3T -.->|Bronze table| SILVER
+    SILVER -->|Write| S3T
+    SFN -->|Start| SILVER_DQ[🔍 Silver DQ Gate<br/>Accuracy, Consistency<br/>Drift detection]
+    SILVER_DQ -->|Read| S3T
+    SILVER_DQ -->|Pass| SFN
+    SILVER_DQ -->|Fail| SNS
+    
+    SFN -->|Start| GOLD[🥇 Gold Batch<br/>Hourly aggregations<br/>Risk scoring 0-100<br/>MERGE INTO]
+    GOLD -->|Read/Write| S3T
+    S3T -.->|Silver table| GOLD
+    GOLD -->|Write| S3T
+    SFN -->|Start| GOLD_DQ[🔍 Gold DQ Gate<br/>Upstream validation<br/>Aggregation consistency<br/>Validity checks]
+    GOLD_DQ -->|Read| S3T
+    GOLD_DQ -->|Pass| SFN
+    GOLD_DQ -->|Fail| SNS
+    
+    %% Storage Layer Details
+    S3T --> S3_BRONZE[bronze.raw_events<br/>Partition: event_date, event_hour]
+    S3T --> S3_SILVER[silver.cleaned_events<br/>Partition: event_date, region]
+    S3T --> S3_GOLD1[gold.hourly_stats<br/>Partition: stat_date, region]
+    S3T --> S3_GOLD2[gold.risk_scores<br/>Partition: stat_date]
+    S3T --> S3_GOLD3[gold.daily_analytics_summary<br/>Partition: summary_date]
+    S3T --> S3_DQ1[dq_audit.quality_results<br/>DQ gate evidence]
+    S3T --> S3_DQ2[dq_audit.profile_metrics<br/>Drift detection data]
+    
+    %% Dashboard & Analytics
+    S3T -->|Data Source| DASHBOARD[📊 CloudWatch Dashboard<br/>Pipeline Health<br/>DQ Status<br/>SLA Monitoring]
+    S3T -.->|Future| QS[📈 QuickSight<br/>Data Visualization<br/>Not implemented yet]
+    
+    %% Auto-Loop
+    SFN -->|Wait 10min| SFN
+    
+    %% Styling
+    classDef external fill:#FFE5B4,stroke:#E85A23,stroke-width:3px,color:black
+    classDef ingestion fill:#E1F5FE,stroke:#2196F3,stroke-width:2px,color:black
+    classDef streaming fill:#C8E6C9,stroke:#4CAF50,stroke-width:2px,color:black
+    classDef processing fill:#FFF9C4,stroke:#F9A825,stroke-width:2px,color:black
+    classDef monitoring fill:#FFEBEE,stroke:#E53935,stroke-width:2px,color:black
+    classDef storage fill:#E1F5FE,stroke:#2196F3,stroke-width:2px,color:black
+    classDef orchestration fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px,color:black
+    classDef alert fill:#FFEBEE,stroke:#C62828,stroke-width:2px,color:black
+    classDef dashboard fill:#E8F5E9,stroke:#2E7D32,stroke-width:2px,color:black
+    classDef future fill:#FAFAFA,stroke:#BDBDBD,stroke-width:2px,color:#9E9E9E,stroke-dasharray: 5 5
+    
+    class WIKI external
+    class PRODUCER ingestion
+    class MSK streaming
+    class BRONZE,SILVER,GOLD processing
+    class BRONZE_DQ,SILVER_DQ,GOLD_DQ monitoring
+    class S3T,S3_BRONZE,S3_SILVER,S3_GOLD1,S3_GOLD2,S3_GOLD3,S3_DQ1,S3_DQ2 storage
+    class SFN,EB orchestration
+    class CW_METRICS,CW_ALARM,LAMBDA,SNS alert
+    class DASHBOARD dashboard
+    class QS future
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                         WikiStream Data Pipeline Flow                                    │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
 
-     INGESTION                    STREAMING                         PROCESSING
-  ┌──────────────┐            ┌──────────────┐         ┌─────────────────────────────────────┐
-  │  Wikipedia   │            │   Amazon     │         │         EMR Serverless (Spark 3.5)  │
-  │ EventStreams │───SSE────▶│    MSK       │───────▶│                                     │
-  │   (Live)     │            │  (Kafka)     │         │  ┌─────────────────┐                │
-  └──────────────┘            └──────────────┘         │  │  Bronze Layer   │                │
-         │                           │                 │  │  (Streaming)    │                │
-         ▼                           ▼                 │  │  3-min batches  │                │
-  ┌──────────────┐            ┌──────────────┐         │  └────────┬────────┘                │
-  │ ECS Fargate  │            │ Topics:      │         │           │                         │
-  │   Producer   │───────────▶│ • raw-events │         │           ▼                         │
-  │  (Python)    │            │ • dlq-events │         │  ┌─────────────────┐                │
-  └──────────────┘            └──────────────┘         │  │  Bronze DQ Gate │◄───┐           │
-                                                       │  │  (PySpark)      │    │           │
-                                                       │  └────────┬────────┘    │           │
-                                                       │           │ Pass        │ Fail      │
-                                                       │           ▼             │           │
-                                                       │  ┌─────────────────┐    ├───▶ SNS   │
-                                                       │  │  Silver Layer   │    │           │
-                                                       │  │  (Batch - 5min) │    │           │
-                                                       │  └────────┬────────┘    │           │
-                                                       │           │             │           │
-                                                       │           ▼             │           │
-                                                       │  ┌─────────────────┐    │           │
-                                                       │  │  Silver DQ Gate │◄───┤           │
-                                                       │  │  (Drift Check)  │    │           │
-                                                       │  └────────┬────────┘    │           │
-                                                       │           │ Pass        │           │
-                                                       │           ▼             │           │
-                                                       │  ┌─────────────────┐    │           │
-                                                       │  │   Gold Layer    │    │           │
-                                                       │  │  (Aggregations) │    │           │
-                                                       │  └────────┬────────┘    │           │
-                                                       │           │             │           │
-                                                       │           ▼             │           │
-                                                       │  ┌─────────────────┐    │           │
-                                                       │  │   Gold DQ Gate  │◄───┘           │
-                                                       │  │  (Validation)   │                │
-                                                       │  └─────────────────┘                │
-                                                       └─────────────────────────────────────┘
-                                                                      │
-                                                                      ▼
-                                               ┌─────────────────────────────────────────────────┐
-                                               │           S3 Tables (Apache Iceberg 1.10.0)     │
-                                               │  ┌──────────┬──────────┬──────────┬───────────┐ │
-                                               │  │  bronze  │  silver  │   gold   │  dq_audit │ │
-                                               │  │ .raw_    │.cleaned_ │.hourly_  │ .quality_ │ │
-                                               │  │ events   │ events   │ stats    │  results  │ │
-                                               │  │          │          │.risk_    │ .profile_ │ │
-                                               │  │          │          │ scores   │  metrics  │ │
-                                               │  └──────────┴──────────┴──────────┴───────────┘ │
-                                               └─────────────────────────────────────────────────┘
-```
+### Data Flow Key Points
+
+1. **Domain Filtering**: Occurs at Producer (ECS Fargate) before Kafka - only 18 allowed domains enter pipeline
+2. **Bronze Streaming**: Continuous 3-min micro-batches from Kafka, writes to Iceberg with MERGE for idempotency
+3. **Batch Pipeline**: Self-looping Step Functions orchestrates Silver → Silver DQ → Gold → Gold DQ every ~25-35 min
+4. **DQ Gates**: Block downstream on failure, alert via SNS, all evidence logged to `dq_audit` tables
+5. **Auto-Recovery**: Lambda restarts Bronze job on health check failure
+6. **Monitoring**: CloudWatch metrics, alarms, and comprehensive dashboard for pipeline health
+7. **Storage**: All data in S3 Tables (Iceberg v2) with ZSTD compression and auto-compaction
+8. **Future**: QuickSight not yet implemented - designed for business intelligence dashboards
 
 ## 🔧 Technology Stack
 

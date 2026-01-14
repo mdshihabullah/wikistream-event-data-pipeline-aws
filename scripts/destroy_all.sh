@@ -23,6 +23,11 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 AWS_REGION="${AWS_REGION:-us-east-1}"
+AWS_PROFILE="${AWS_PROFILE:-neuefische}"
+
+# Export AWS_PROFILE so all AWS CLI commands inherit it
+export AWS_PROFILE
+export AWS_REGION
 
 # Colors for output
 RED='\033[0;31m'
@@ -70,13 +75,14 @@ else
     log_warning "Running with --force flag, skipping confirmation"
 fi
 
-# Get AWS account ID
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
+# Get AWS account ID with profile
+log_info "Using AWS Profile: ${AWS_PROFILE}"
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --profile $AWS_PROFILE --query Account --output text 2>/dev/null)
 if [ -z "$AWS_ACCOUNT_ID" ]; then
-    log_error "Failed to get AWS account ID. Check your AWS credentials."
+    log_error "Failed to get AWS account ID. Check your AWS credentials for profile '${AWS_PROFILE}'."
     exit 1
 fi
-log_info "AWS Account: $AWS_ACCOUNT_ID, Region: $AWS_REGION"
+log_info "AWS Account: $AWS_ACCOUNT_ID, Region: $AWS_REGION, Profile: $AWS_PROFILE"
 
 # Track deletion status for final summary
 declare -A DELETION_STATUS
@@ -97,11 +103,11 @@ DELETION_STATUS["cloudwatch"]="pending"
 log_step "STEP 1: Disabling EventBridge Rules & Schedules"
 
 # Delete EventBridge Scheduler schedules (one-time triggers)
-SCHEDULES=$(aws scheduler list-schedules --name-prefix "wikistream" --query 'Schedules[*].Name' --output text 2>/dev/null || echo "")
+SCHEDULES=$(aws scheduler list-schedules --profile $AWS_PROFILE --name-prefix "wikistream" --query 'Schedules[*].Name' --output text 2>/dev/null || echo "")
 if [ -n "$SCHEDULES" ]; then
     for SCHEDULE in $SCHEDULES; do
         log_info "Deleting schedule: $SCHEDULE"
-        aws scheduler delete-schedule --name "$SCHEDULE" 2>/dev/null || true
+        aws scheduler delete-schedule --profile $AWS_PROFILE --name "$SCHEDULE" 2>/dev/null || true
     done
     log_success "EventBridge schedules deleted"
 else
@@ -109,11 +115,11 @@ else
 fi
 
 # Disable EventBridge Rules
-RULES=$(aws events list-rules --name-prefix "wikistream" --query 'Rules[*].Name' --output text 2>/dev/null || echo "")
+RULES=$(aws events list-rules --profile $AWS_PROFILE --name-prefix "wikistream" --query 'Rules[*].Name' --output text 2>/dev/null || echo "")
 if [ -n "$RULES" ]; then
     for RULE in $RULES; do
         log_info "Disabling rule: $RULE"
-        aws events disable-rule --name "$RULE" 2>/dev/null || true
+        aws events disable-rule --profile $AWS_PROFILE --name "$RULE" 2>/dev/null || true
     done
     log_success "EventBridge rules disabled"
 else
@@ -126,18 +132,18 @@ DELETION_STATUS["eventbridge"]="done"
 # =============================================================================
 log_step "STEP 2: Stopping Step Functions Executions"
 
-SFN_ARNS=$(aws stepfunctions list-state-machines --query 'stateMachines[?contains(name,`wikistream`)].stateMachineArn' --output text 2>/dev/null || echo "")
+SFN_ARNS=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query 'stateMachines[?contains(name,`wikistream`)].stateMachineArn' --output text 2>/dev/null || echo "")
 if [ -n "$SFN_ARNS" ]; then
     for SFN_ARN in $SFN_ARNS; do
         SFN_NAME=$(basename "$SFN_ARN")
         log_info "Checking: $SFN_NAME"
         
         # Stop all running executions
-        RUNNING_EXECS=$(aws stepfunctions list-executions --state-machine-arn "$SFN_ARN" --status-filter RUNNING --query 'executions[*].executionArn' --output text 2>/dev/null || echo "")
+        RUNNING_EXECS=$(aws stepfunctions list-executions --profile $AWS_PROFILE --state-machine-arn "$SFN_ARN" --status-filter RUNNING --query 'executions[*].executionArn' --output text 2>/dev/null || echo "")
         if [ -n "$RUNNING_EXECS" ]; then
             for EXEC_ARN in $RUNNING_EXECS; do
                 log_info "  Stopping execution: $(basename "$EXEC_ARN")"
-                aws stepfunctions stop-execution --execution-arn "$EXEC_ARN" --cause "Infrastructure destroy" 2>/dev/null || true
+                aws stepfunctions stop-execution --profile $AWS_PROFILE --execution-arn "$EXEC_ARN" --cause "Infrastructure destroy" 2>/dev/null || true
             done
         fi
     done
@@ -152,7 +158,7 @@ DELETION_STATUS["stepfunctions"]="done"
 # =============================================================================
 log_step "STEP 3: Cancelling EMR Serverless Jobs"
 
-EMR_APPS=$(aws emr-serverless list-applications --query 'applications[?contains(name,`wikistream`)].[id,name,state]' --output text 2>/dev/null || echo "")
+EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query 'applications[?contains(name,`wikistream`)].[id,name,state]' --output text 2>/dev/null || echo "")
 
 if [ -n "$EMR_APPS" ]; then
     while IFS=$'\t' read -r APP_ID APP_NAME APP_STATE; do
@@ -161,19 +167,19 @@ if [ -n "$EMR_APPS" ]; then
         log_info "Processing EMR App: $APP_NAME ($APP_ID) - State: $APP_STATE"
         
         # Cancel all running/pending jobs
-        JOBS=$(aws emr-serverless list-job-runs --application-id "$APP_ID" --states RUNNING PENDING SUBMITTED SCHEDULED --query 'jobRuns[*].[id,name,state]' --output text 2>/dev/null || echo "")
+        JOBS=$(aws emr-serverless list-job-runs --profile $AWS_PROFILE --application-id "$APP_ID" --states RUNNING PENDING SUBMITTED SCHEDULED --query 'jobRuns[*].[id,name,state]' --output text 2>/dev/null || echo "")
         
         if [ -n "$JOBS" ]; then
             while IFS=$'\t' read -r JOB_ID JOB_NAME JOB_STATE; do
                 [ -z "$JOB_ID" ] && continue
                 log_info "  Cancelling job: $JOB_NAME ($JOB_ID)"
-                aws emr-serverless cancel-job-run --application-id "$APP_ID" --job-run-id "$JOB_ID" 2>/dev/null || true
+                aws emr-serverless cancel-job-run --profile $AWS_PROFILE --application-id "$APP_ID" --job-run-id "$JOB_ID" 2>/dev/null || true
             done <<< "$JOBS"
             
             # Wait for all jobs to be cancelled (max 2 minutes)
             log_info "  Waiting for jobs to cancel..."
             for i in {1..24}; do
-                STILL_RUNNING=$(aws emr-serverless list-job-runs --application-id "$APP_ID" --states RUNNING PENDING SUBMITTED CANCELLING --query 'jobRuns[*].id' --output text 2>/dev/null || echo "")
+                STILL_RUNNING=$(aws emr-serverless list-job-runs --profile $AWS_PROFILE --application-id "$APP_ID" --states RUNNING PENDING SUBMITTED CANCELLING --query 'jobRuns[*].id' --output text 2>/dev/null || echo "")
                 if [ -z "$STILL_RUNNING" ]; then
                     log_success "  All jobs cancelled"
                     break
@@ -198,7 +204,7 @@ DELETION_STATUS["emr_jobs"]="done"
 log_step "STEP 4: Stopping EMR Serverless Applications"
 
 # Re-fetch in case state changed
-EMR_APPS=$(aws emr-serverless list-applications --query 'applications[?contains(name,`wikistream`)].[id,name,state]' --output text 2>/dev/null || echo "")
+EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query 'applications[?contains(name,`wikistream`)].[id,name,state]' --output text 2>/dev/null || echo "")
 
 if [ -n "$EMR_APPS" ]; then
     while IFS=$'\t' read -r APP_ID APP_NAME APP_STATE; do
@@ -206,12 +212,12 @@ if [ -n "$EMR_APPS" ]; then
         
         if [ "$APP_STATE" == "STARTED" ] || [ "$APP_STATE" == "STARTING" ]; then
             log_info "Stopping: $APP_NAME ($APP_ID)"
-            aws emr-serverless stop-application --application-id "$APP_ID" 2>/dev/null || true
+            aws emr-serverless stop-application --profile $AWS_PROFILE --application-id "$APP_ID" 2>/dev/null || true
             
             # Wait for STOPPED state (max 2 minutes)
             log_info "  Waiting for STOPPED state..."
             for i in {1..24}; do
-                STATE=$(aws emr-serverless get-application --application-id "$APP_ID" --query 'application.state' --output text 2>/dev/null || echo "UNKNOWN")
+                STATE=$(aws emr-serverless get-application --profile $AWS_PROFILE --application-id "$APP_ID" --query 'application.state' --output text 2>/dev/null || echo "UNKNOWN")
                 if [ "$STATE" == "STOPPED" ] || [ "$STATE" == "TERMINATED" ]; then
                     log_success "  Application stopped"
                     break
@@ -235,18 +241,18 @@ DELETION_STATUS["emr_app"]="done"
 # =============================================================================
 log_step "STEP 5: Stopping ECS Services"
 
-ECS_CLUSTERS=$(aws ecs list-clusters --query 'clusterArns[?contains(@,`wikistream`)]' --output text 2>/dev/null || echo "")
+ECS_CLUSTERS=$(aws ecs list-clusters --profile $AWS_PROFILE --query 'clusterArns[?contains(@,`wikistream`)]' --output text 2>/dev/null || echo "")
 if [ -n "$ECS_CLUSTERS" ]; then
     for CLUSTER_ARN in $ECS_CLUSTERS; do
         CLUSTER_NAME=$(basename "$CLUSTER_ARN")
         log_info "Processing cluster: $CLUSTER_NAME"
         
-        SERVICES=$(aws ecs list-services --cluster "$CLUSTER_NAME" --query 'serviceArns' --output text 2>/dev/null || echo "")
+        SERVICES=$(aws ecs list-services --profile $AWS_PROFILE --cluster "$CLUSTER_NAME" --query 'serviceArns' --output text 2>/dev/null || echo "")
         if [ -n "$SERVICES" ]; then
             for SVC in $SERVICES; do
                 SVC_NAME=$(basename "$SVC")
                 log_info "  Stopping service: $SVC_NAME"
-                aws ecs update-service --cluster "$CLUSTER_NAME" --service "$SVC_NAME" --desired-count 0 --no-cli-pager 2>/dev/null || true
+                aws ecs update-service --profile $AWS_PROFILE --cluster "$CLUSTER_NAME" --service "$SVC_NAME" --desired-count 0 --no-cli-pager 2>/dev/null || true
             done
         fi
     done
@@ -292,17 +298,17 @@ TABLE_BUCKET_ARN="arn:aws:s3tables:${AWS_REGION}:${AWS_ACCOUNT_ID}:bucket/wikist
 S3_TABLES_DELETED=0
 S3_TABLES_TOTAL=0
 
-if aws s3tables get-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" &>/dev/null; then
+if aws s3tables get-table-bucket --profile $AWS_PROFILE --table-bucket-arn "$TABLE_BUCKET_ARN" &>/dev/null; then
     log_info "S3 Tables bucket found, deleting tables and namespaces..."
     log_info "Note: S3 Tables deletion can take several minutes per table"
     
     for NS in bronze silver gold dq_audit; do
-        TABLES=$(aws s3tables list-tables --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" --query 'tables[*].name' --output text 2>/dev/null || echo "")
+        TABLES=$(aws s3tables list-tables --profile $AWS_PROFILE --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" --query 'tables[*].name' --output text 2>/dev/null || echo "")
         if [ -n "$TABLES" ] && [ "$TABLES" != "None" ]; then
             for TABLE in $TABLES; do
                 S3_TABLES_TOTAL=$((S3_TABLES_TOTAL + 1))
                 log_info "Deleting table: ${NS}.${TABLE} (may take 1-2 min)..."
-                if aws s3tables delete-table --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" --name "$TABLE" 2>/dev/null; then
+                if aws s3tables delete-table --profile $AWS_PROFILE --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" --name "$TABLE" 2>/dev/null; then
                     S3_TABLES_DELETED=$((S3_TABLES_DELETED + 1))
                     log_success "  Table ${NS}.${TABLE} deleted"
                 else
@@ -314,7 +320,7 @@ if aws s3tables get-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" &>/dev/n
         # Delete namespace (wait a moment for table deletions to propagate)
         sleep 2
         log_info "Deleting namespace: ${NS}..."
-        aws s3tables delete-namespace --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" 2>/dev/null || true
+        aws s3tables delete-namespace --profile $AWS_PROFILE --table-bucket-arn "$TABLE_BUCKET_ARN" --namespace "$NS" 2>/dev/null || true
     done
     
     # Wait for table deletions to fully propagate before deleting bucket
@@ -323,7 +329,7 @@ if aws s3tables get-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" &>/dev/n
     
     # Delete table bucket
     log_info "Deleting table bucket..."
-    if aws s3tables delete-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" 2>/dev/null; then
+    if aws s3tables delete-table-bucket --profile $AWS_PROFILE --table-bucket-arn "$TABLE_BUCKET_ARN" 2>/dev/null; then
         log_success "S3 Tables bucket deleted (${S3_TABLES_DELETED}/${S3_TABLES_TOTAL} tables)"
         DELETION_STATUS["s3_tables"]="done"
     else
@@ -342,18 +348,18 @@ log_step "STEP 8: Deleting S3 Data Bucket"
 
 DATA_BUCKET="wikistream-dev-data-${AWS_ACCOUNT_ID}"
 
-if aws s3api head-bucket --bucket "$DATA_BUCKET" 2>/dev/null; then
+if aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" 2>/dev/null; then
     log_info "Emptying bucket: $DATA_BUCKET"
     
     # Fast delete all current objects
-    aws s3 rm "s3://${DATA_BUCKET}" --recursive --quiet 2>/dev/null || true
+    aws s3 rm "s3://${DATA_BUCKET}" --profile $AWS_PROFILE --recursive --quiet 2>/dev/null || true
     
     # Batch delete all versions (much faster than one-by-one)
     log_info "Deleting object versions (batch mode)..."
     
     # Get all versions and delete in batches of 1000
     while true; do
-        VERSIONS=$(aws s3api list-object-versions --bucket "$DATA_BUCKET" --max-keys 1000 \
+        VERSIONS=$(aws s3api list-object-versions --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --max-keys 1000 \
             --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null)
         
         # Check if there are objects to delete
@@ -361,7 +367,7 @@ if aws s3api head-bucket --bucket "$DATA_BUCKET" 2>/dev/null; then
         [ "$OBJECT_COUNT" == "0" ] || [ "$OBJECT_COUNT" == "null" ] && break
         
         # Batch delete
-        echo "$VERSIONS" | aws s3api delete-objects --bucket "$DATA_BUCKET" --delete file:///dev/stdin 2>/dev/null || true
+        echo "$VERSIONS" | aws s3api delete-objects --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --delete file:///dev/stdin 2>/dev/null || true
         echo -n "."
     done
     echo ""
@@ -369,19 +375,19 @@ if aws s3api head-bucket --bucket "$DATA_BUCKET" 2>/dev/null; then
     # Batch delete all delete markers
     log_info "Deleting delete markers..."
     while true; do
-        MARKERS=$(aws s3api list-object-versions --bucket "$DATA_BUCKET" --max-keys 1000 \
+        MARKERS=$(aws s3api list-object-versions --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --max-keys 1000 \
             --query '{Objects: DeleteMarkers[].{Key:Key,VersionId:VersionId}}' --output json 2>/dev/null)
         
         MARKER_COUNT=$(echo "$MARKERS" | jq '.Objects | length' 2>/dev/null || echo "0")
         [ "$MARKER_COUNT" == "0" ] || [ "$MARKER_COUNT" == "null" ] && break
         
-        echo "$MARKERS" | aws s3api delete-objects --bucket "$DATA_BUCKET" --delete file:///dev/stdin 2>/dev/null || true
+        echo "$MARKERS" | aws s3api delete-objects --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --delete file:///dev/stdin 2>/dev/null || true
         echo -n "."
     done
     echo ""
     
     # Delete bucket
-    if aws s3api delete-bucket --bucket "$DATA_BUCKET" 2>/dev/null; then
+    if aws s3api delete-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" 2>/dev/null; then
         log_success "S3 bucket deleted"
         DELETION_STATUS["s3_bucket"]="done"
     else
@@ -398,8 +404,8 @@ fi
 # =============================================================================
 log_step "STEP 9: Deleting ECR Repository"
 
-if aws ecr describe-repositories --repository-names "wikistream-dev-producer" &>/dev/null; then
-    if aws ecr delete-repository --repository-name "wikistream-dev-producer" --force 2>/dev/null; then
+if aws ecr describe-repositories --profile $AWS_PROFILE --repository-names "wikistream-dev-producer" &>/dev/null; then
+    if aws ecr delete-repository --profile $AWS_PROFILE --repository-name "wikistream-dev-producer" --force 2>/dev/null; then
         log_success "ECR repository deleted"
         DELETION_STATUS["ecr"]="done"
     else
@@ -417,31 +423,31 @@ fi
 log_step "STEP 10: Deleting CloudWatch Resources"
 
 # Delete log groups
-LOG_GROUPS=$(aws logs describe-log-groups --log-group-name-prefix "/aws/emr-serverless/wikistream" --query 'logGroups[*].logGroupName' --output text 2>/dev/null || echo "")
+LOG_GROUPS=$(aws logs describe-log-groups --profile $AWS_PROFILE --log-group-name-prefix "/aws/emr-serverless/wikistream" --query 'logGroups[*].logGroupName' --output text 2>/dev/null || echo "")
 if [ -n "$LOG_GROUPS" ]; then
     for LG in $LOG_GROUPS; do
         log_info "Deleting log group: $LG"
-        aws logs delete-log-group --log-group-name "$LG" 2>/dev/null || true
+        aws logs delete-log-group --profile $AWS_PROFILE --log-group-name "$LG" 2>/dev/null || true
     done
 fi
 
 # Delete Lambda log groups
-LAMBDA_LOGS=$(aws logs describe-log-groups --log-group-name-prefix "/aws/lambda/wikistream" --query 'logGroups[*].logGroupName' --output text 2>/dev/null || echo "")
+LAMBDA_LOGS=$(aws logs describe-log-groups --profile $AWS_PROFILE --log-group-name-prefix "/aws/lambda/wikistream" --query 'logGroups[*].logGroupName' --output text 2>/dev/null || echo "")
 if [ -n "$LAMBDA_LOGS" ]; then
     for LG in $LAMBDA_LOGS; do
         log_info "Deleting log group: $LG"
-        aws logs delete-log-group --log-group-name "$LG" 2>/dev/null || true
+        aws logs delete-log-group --profile $AWS_PROFILE --log-group-name "$LG" 2>/dev/null || true
     done
 fi
 
 # Delete dashboard
-aws cloudwatch delete-dashboards --dashboard-names "wikistream-dev-pipeline-dashboard" 2>/dev/null && \
+aws cloudwatch delete-dashboards --profile $AWS_PROFILE --dashboard-names "wikistream-dev-pipeline-dashboard" 2>/dev/null && \
     log_info "Deleted CloudWatch dashboard" || true
 
 # Delete alarms
-ALARMS=$(aws cloudwatch describe-alarms --alarm-name-prefix "wikistream" --query 'MetricAlarms[*].AlarmName' --output text 2>/dev/null || echo "")
+ALARMS=$(aws cloudwatch describe-alarms --profile $AWS_PROFILE --alarm-name-prefix "wikistream" --query 'MetricAlarms[*].AlarmName' --output text 2>/dev/null || echo "")
 if [ -n "$ALARMS" ]; then
-    aws cloudwatch delete-alarms --alarm-names $ALARMS 2>/dev/null || true
+    aws cloudwatch delete-alarms --profile $AWS_PROFILE --alarm-names $ALARMS 2>/dev/null || true
     log_info "Deleted CloudWatch alarms"
 fi
 
@@ -454,87 +460,87 @@ DELETION_STATUS["cloudwatch"]="done"
 log_step "STEP 11: Cleaning Up Remaining Resources"
 
 # Delete EMR applications
-EMR_APPS=$(aws emr-serverless list-applications --query 'applications[?contains(name,`wikistream`)].id' --output text 2>/dev/null || echo "")
+EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query 'applications[?contains(name,`wikistream`)].id' --output text 2>/dev/null || echo "")
 if [ -n "$EMR_APPS" ]; then
     for APP_ID in $EMR_APPS; do
         log_info "Deleting EMR app: $APP_ID"
-        aws emr-serverless delete-application --application-id "$APP_ID" 2>/dev/null || true
+        aws emr-serverless delete-application --profile $AWS_PROFILE --application-id "$APP_ID" 2>/dev/null || true
     done
 fi
 
 # Delete MSK clusters
-MSK_CLUSTERS=$(aws kafka list-clusters --query 'ClusterInfoList[?contains(ClusterName,`wikistream`)].ClusterArn' --output text 2>/dev/null || echo "")
+MSK_CLUSTERS=$(aws kafka list-clusters --profile $AWS_PROFILE --query 'ClusterInfoList[?contains(ClusterName,`wikistream`)].ClusterArn' --output text 2>/dev/null || echo "")
 if [ -n "$MSK_CLUSTERS" ]; then
     for CLUSTER_ARN in $MSK_CLUSTERS; do
         log_info "Deleting MSK cluster: $(basename "$CLUSTER_ARN")"
-        aws kafka delete-cluster --cluster-arn "$CLUSTER_ARN" 2>/dev/null || true
+        aws kafka delete-cluster --profile $AWS_PROFILE --cluster-arn "$CLUSTER_ARN" 2>/dev/null || true
     done
 fi
 
 # Delete ECS clusters (re-fetch to get current state)
-ECS_CLUSTERS=$(aws ecs list-clusters --query 'clusterArns[?contains(@,`wikistream`)]' --output text 2>/dev/null || echo "")
+ECS_CLUSTERS=$(aws ecs list-clusters --profile $AWS_PROFILE --query 'clusterArns[?contains(@,`wikistream`)]' --output text 2>/dev/null || echo "")
 if [ -n "$ECS_CLUSTERS" ]; then
     for CLUSTER_ARN in $ECS_CLUSTERS; do
         CLUSTER_NAME=$(basename "$CLUSTER_ARN")
         # Force delete services
-        SERVICES=$(aws ecs list-services --cluster "$CLUSTER_NAME" --query 'serviceArns' --output text 2>/dev/null || echo "")
+        SERVICES=$(aws ecs list-services --profile $AWS_PROFILE --cluster "$CLUSTER_NAME" --query 'serviceArns' --output text 2>/dev/null || echo "")
         if [ -n "$SERVICES" ]; then
             for SVC in $SERVICES; do
-                aws ecs delete-service --cluster "$CLUSTER_NAME" --service "$(basename "$SVC")" --force --no-cli-pager 2>/dev/null || true
+                aws ecs delete-service --profile $AWS_PROFILE --cluster "$CLUSTER_NAME" --service "$(basename "$SVC")" --force --no-cli-pager 2>/dev/null || true
             done
         fi
-        aws ecs delete-cluster --cluster "$CLUSTER_NAME" --no-cli-pager 2>/dev/null || true
+        aws ecs delete-cluster --profile $AWS_PROFILE --cluster "$CLUSTER_NAME" --no-cli-pager 2>/dev/null || true
     done
 fi
 
 # Delete Step Functions
-SFN_ARNS=$(aws stepfunctions list-state-machines --query 'stateMachines[?contains(name,`wikistream`)].stateMachineArn' --output text 2>/dev/null || echo "")
+SFN_ARNS=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query 'stateMachines[?contains(name,`wikistream`)].stateMachineArn' --output text 2>/dev/null || echo "")
 if [ -n "$SFN_ARNS" ]; then
     for SFN_ARN in $SFN_ARNS; do
         log_info "Deleting state machine: $(basename "$SFN_ARN")"
-        aws stepfunctions delete-state-machine --state-machine-arn "$SFN_ARN" 2>/dev/null || true
+        aws stepfunctions delete-state-machine --profile $AWS_PROFILE --state-machine-arn "$SFN_ARN" 2>/dev/null || true
     done
 fi
 
 # Delete EventBridge rules
-RULES=$(aws events list-rules --name-prefix "wikistream" --query 'Rules[*].Name' --output text 2>/dev/null || echo "")
+RULES=$(aws events list-rules --profile $AWS_PROFILE --name-prefix "wikistream" --query 'Rules[*].Name' --output text 2>/dev/null || echo "")
 if [ -n "$RULES" ]; then
     for RULE in $RULES; do
         # Remove targets first
-        TARGETS=$(aws events list-targets-by-rule --rule "$RULE" --query 'Targets[*].Id' --output text 2>/dev/null || echo "")
+        TARGETS=$(aws events list-targets-by-rule --profile $AWS_PROFILE --rule "$RULE" --query 'Targets[*].Id' --output text 2>/dev/null || echo "")
         if [ -n "$TARGETS" ]; then
             for TARGET in $TARGETS; do
-                aws events remove-targets --rule "$RULE" --ids "$TARGET" 2>/dev/null || true
+                aws events remove-targets --profile $AWS_PROFILE --rule "$RULE" --ids "$TARGET" 2>/dev/null || true
             done
         fi
-        aws events delete-rule --name "$RULE" 2>/dev/null || true
+        aws events delete-rule --profile $AWS_PROFILE --name "$RULE" 2>/dev/null || true
     done
 fi
 
 # Delete any remaining EventBridge Scheduler schedules
-SCHEDULES=$(aws scheduler list-schedules --name-prefix "wikistream" --query 'Schedules[*].Name' --output text 2>/dev/null || echo "")
+SCHEDULES=$(aws scheduler list-schedules --profile $AWS_PROFILE --name-prefix "wikistream" --query 'Schedules[*].Name' --output text 2>/dev/null || echo "")
 if [ -n "$SCHEDULES" ]; then
     for SCHEDULE in $SCHEDULES; do
         log_info "Deleting schedule: $SCHEDULE"
-        aws scheduler delete-schedule --name "$SCHEDULE" 2>/dev/null || true
+        aws scheduler delete-schedule --profile $AWS_PROFILE --name "$SCHEDULE" 2>/dev/null || true
     done
 fi
 
 # Delete Lambda functions
-LAMBDAS=$(aws lambda list-functions --query 'Functions[?contains(FunctionName,`wikistream`)].FunctionName' --output text 2>/dev/null || echo "")
+LAMBDAS=$(aws lambda list-functions --profile $AWS_PROFILE --query 'Functions[?contains(FunctionName,`wikistream`)].FunctionName' --output text 2>/dev/null || echo "")
 if [ -n "$LAMBDAS" ]; then
     for FUNC in $LAMBDAS; do
         log_info "Deleting Lambda: $FUNC"
-        aws lambda delete-function --function-name "$FUNC" 2>/dev/null || true
+        aws lambda delete-function --profile $AWS_PROFILE --function-name "$FUNC" 2>/dev/null || true
     done
 fi
 
 # Delete SNS topics
-SNS_TOPICS=$(aws sns list-topics --query 'Topics[?contains(TopicArn,`wikistream`)].TopicArn' --output text 2>/dev/null || echo "")
+SNS_TOPICS=$(aws sns list-topics --profile $AWS_PROFILE --query 'Topics[?contains(TopicArn,`wikistream`)].TopicArn' --output text 2>/dev/null || echo "")
 if [ -n "$SNS_TOPICS" ]; then
     for TOPIC in $SNS_TOPICS; do
         log_info "Deleting SNS topic: $(basename "$TOPIC")"
-        aws sns delete-topic --topic-arn "$TOPIC" 2>/dev/null || true
+        aws sns delete-topic --profile $AWS_PROFILE --topic-arn "$TOPIC" 2>/dev/null || true
     done
 fi
 
@@ -566,7 +572,7 @@ log_step "STEP 13: Final Verification"
 VERIFY_ERRORS=0
 
 # Verify EMR applications deleted
-EMR_CHECK=$(aws emr-serverless list-applications --query 'applications[?contains(name,`wikistream`)].id' --output text 2>/dev/null || echo "")
+EMR_CHECK=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query 'applications[?contains(name,`wikistream`)].id' --output text 2>/dev/null || echo "")
 if [ -n "$EMR_CHECK" ]; then
     log_warning "EMR applications still exist (may be terminating): $EMR_CHECK"
     VERIFY_ERRORS=$((VERIFY_ERRORS + 1))
@@ -575,7 +581,7 @@ else
 fi
 
 # Verify S3 Tables bucket deleted
-TABLE_BUCKET_CHECK=$(aws s3tables get-table-bucket --table-bucket-arn "$TABLE_BUCKET_ARN" 2>&1 || echo "NOT_FOUND")
+TABLE_BUCKET_CHECK=$(aws s3tables get-table-bucket --profile $AWS_PROFILE --table-bucket-arn "$TABLE_BUCKET_ARN" 2>&1 || echo "NOT_FOUND")
 if [[ "$TABLE_BUCKET_CHECK" == *"NOT_FOUND"* ]] || [[ "$TABLE_BUCKET_CHECK" == *"ResourceNotFoundException"* ]] || [[ "$TABLE_BUCKET_CHECK" == *"NoSuchBucket"* ]]; then
     log_success "✓ S3 Tables bucket: deleted"
 else
@@ -584,7 +590,7 @@ else
 fi
 
 # Verify S3 data bucket deleted
-if ! aws s3api head-bucket --bucket "$DATA_BUCKET" 2>/dev/null; then
+if ! aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" 2>/dev/null; then
     log_success "✓ S3 data bucket: deleted"
 else
     log_warning "S3 data bucket still exists"
@@ -592,7 +598,7 @@ else
 fi
 
 # Verify Step Functions deleted
-SFN_CHECK=$(aws stepfunctions list-state-machines --query 'stateMachines[?contains(name,`wikistream`)].name' --output text 2>/dev/null || echo "")
+SFN_CHECK=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query 'stateMachines[?contains(name,`wikistream`)].name' --output text 2>/dev/null || echo "")
 if [ -z "$SFN_CHECK" ]; then
     log_success "✓ Step Functions: deleted"
 else
@@ -601,7 +607,7 @@ else
 fi
 
 # Verify ECR repository deleted
-if ! aws ecr describe-repositories --repository-names "wikistream-dev-producer" &>/dev/null; then
+if ! aws ecr describe-repositories --profile $AWS_PROFILE --repository-names "wikistream-dev-producer" &>/dev/null; then
     log_success "✓ ECR repository: deleted"
 else
     log_warning "ECR repository still exists"

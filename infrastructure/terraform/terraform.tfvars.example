@@ -17,5 +17,8 @@ environment  = "dev"  # Options: dev, staging, prod
 # AWS region (must support S3 Tables)
 aws_region = "us-east-1"
 
+# AWS CLI profile name (matches ~/.aws/credentials profile name)
+aws_current_profile = "neuefische"  # Or your custom profile name
+
 # Network settings
 vpc_cidr = "10.0.0.0/16"
