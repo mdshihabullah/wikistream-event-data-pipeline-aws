@@ -1932,7 +1932,7 @@ aws s3tables delete-table --table-bucket-arn $S3_TABLES_ARN --namespace bronze -
 5. **Disable pre-warming** if cold starts are acceptable:
    ```hcl
    # Remove initial_capacity blocks in Terraform
-   ```
+```
 
 ---
 

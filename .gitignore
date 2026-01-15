@@ -240,13 +240,31 @@ secrets/
 .git
 
 # ============================================================================
-# DATA FILES
+# DATA AND IMAGE FILES
 # ============================================================================
 *.csv
 *.json
 *.parquet
 !quicksight/**/*.json
 !monitoring/**/*.json
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.ico
+*.webp
+*.svg
+*.eps
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+*.odt
 
 # Large data files
 *.zip
