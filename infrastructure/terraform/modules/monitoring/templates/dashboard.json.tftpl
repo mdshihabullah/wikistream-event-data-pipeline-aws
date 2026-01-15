@@ -1,0 +1,301 @@
+{
+  "periodOverride": "auto",
+  "widgets": [
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 0,
+      "width": 4,
+      "height": 4,
+      "properties": {
+        "title": "Step Functions Today",
+        "region": "${region}",
+        "view": "singleValue",
+        "stacked": false,
+        "period": 86400,
+        "stat": "Sum",
+        "metrics": [
+          ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#2ca02c", "label": "Success" }],
+          ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#d62728", "label": "Failed" }]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 4,
+      "y": 0,
+      "width": 4,
+      "height": 4,
+      "properties": {
+        "title": "ECS Producer Status",
+        "region": "${region}",
+        "view": "singleValue",
+        "period": 60,
+        "stat": "Average",
+        "metrics": [
+          ["AWS/ECS", "CPUUtilization", "ClusterName", "${ecs_cluster_name}", "ServiceName", "${ecs_service_name}", { "label": "CPU %" }],
+          ["AWS/ECS", "MemoryUtilization", "ClusterName", "${ecs_cluster_name}", "ServiceName", "${ecs_service_name}", { "label": "Mem %" }]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 0,
+      "width": 4,
+      "height": 4,
+      "properties": {
+        "title": "DQ Gate Status",
+        "region": "${region}",
+        "view": "singleValue",
+        "period": 3600,
+        "stat": "Sum",
+        "metrics": [
+          ["WikiStream/DataQuality", "DQGateStatus", "Layer", "bronze", { "label": "Bronze", "color": "#17becf" }],
+          ["WikiStream/DataQuality", "DQGateStatus", "Layer", "silver", { "label": "Silver", "color": "#7f7f7f" }],
+          ["WikiStream/DataQuality", "DQGateStatus", "Layer", "gold", { "label": "Gold", "color": "#ffd700" }]
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 0,
+      "width": 4,
+      "height": 4,
+      "properties": {
+        "title": "Kafka Throughput/sec",
+        "region": "${region}",
+        "view": "singleValue",
+        "period": 60,
+        "stat": "Average",
+        "metrics": [
+          ["AWS/Kafka", "BytesInPerSec", "Cluster Name", "${msk_cluster_name}", { "label": "In (B/s)" }],
+          ["AWS/Kafka", "BytesOutPerSec", "Cluster Name", "${msk_cluster_name}", { "label": "Out (B/s)" }]
+        ]
+      }
+    },
+    {
+      "type": "alarm",
+      "x": 16,
+      "y": 0,
+      "width": 8,
+      "height": 4,
+      "properties": {
+        "title": "Active Alarms",
+        "alarms": [
+          "${ecs_cpu_alarm_arn}",
+          "${bronze_health_arn}",
+          "${pipeline_failure_arn}"
+        ]
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 4,
+      "width": 12,
+      "height": 5,
+      "properties": {
+        "title": "Batch Pipeline Executions (1-min resolution)",
+        "region": "${region}",
+        "view": "timeSeries",
+        "stacked": false,
+        "period": 60,
+        "stat": "Sum",
+        "metrics": [
+          ["AWS/States", "ExecutionsStarted", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#1f77b4", "label": "Started" }],
+          ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#2ca02c", "label": "Succeeded" }],
+          ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#d62728", "label": "Failed" }],
+          ["AWS/States", "ExecutionsTimedOut", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#ff7f0e", "label": "Timed Out" }]
+        ],
+        "yAxis": { "left": { "min": 0 } }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 4,
+      "width": 12,
+      "height": 5,
+      "properties": {
+        "title": "Pipeline Execution Duration",
+        "region": "${region}",
+        "view": "timeSeries",
+        "period": 60,
+        "stat": "Average",
+        "metrics": [
+          ["AWS/States", "ExecutionTime", "StateMachineArn", "${batch_pipeline_arn}", { "label": "Avg Duration (ms)", "color": "#9467bd" }]
+        ],
+        "yAxis": { "left": { "min": 0, "label": "milliseconds" } },
+        "annotations": {
+          "horizontal": [
+            { "value": 300000, "color": "#ff7f0e", "label": "5 min target" }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 9,
+      "width": 8,
+      "height": 5,
+      "properties": {
+        "title": "Bronze Records Processed (Streaming)",
+        "region": "${region}",
+        "view": "timeSeries",
+        "period": 60,
+        "stat": "Sum",
+        "metrics": [
+          ["WikiStream/Pipeline", "BronzeRecordsProcessed", "Layer", "bronze", { "label": "Records/min", "color": "#17becf" }],
+          ["WikiStream/Pipeline", "BronzeBatchCompleted", "Layer", "bronze", { "label": "Batches", "color": "#2ca02c", "yAxis": "right" }]
+        ],
+        "yAxis": {
+          "left": { "min": 0, "label": "Records" },
+          "right": { "min": 0, "label": "Batches" }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 9,
+      "width": 8,
+      "height": 5,
+      "properties": {
+        "title": "Bronze Processing Latency",
+        "region": "${region}",
+        "view": "timeSeries",
+        "period": 60,
+        "stat": "Average",
+        "metrics": [
+          ["WikiStream/Pipeline", "ProcessingLatencyMs", "Layer", "bronze", { "label": "Latency (ms)", "color": "#9467bd" }]
+        ],
+        "yAxis": { "left": { "min": 0, "label": "milliseconds" } },
+        "annotations": {
+          "horizontal": [
+            { "value": 60000, "color": "#ff7f0e", "label": "1 min target" }
+          ]
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 9,
+      "width": 8,
+      "height": 5,
+      "properties": {
+        "title": "DQ Pass Rate by Layer",
+        "region": "${region}",
+        "view": "timeSeries",
+        "period": 300,
+        "stat": "Average",
+        "metrics": [
+          ["WikiStream/DataQuality", "DQPassRate", "Layer", "bronze", { "label": "Bronze %", "color": "#17becf" }],
+          ["WikiStream/DataQuality", "DQPassRate", "Layer", "silver", { "label": "Silver %", "color": "#7f7f7f" }],
+          ["WikiStream/DataQuality", "DQPassRate", "Layer", "gold", { "label": "Gold %", "color": "#ffd700" }]
+        ],
+        "yAxis": { "left": { "min": 0, "max": 100 } }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0,
+      "y": 14,
+      "width": 8,
+      "height": 5,
+      "properties": {
+        "title": "DQ Gate Pass/Fail (Last Hour)",
+        "region": "${region}",
+        "view": "timeSeries",
+        "period": 300,
+        "stat": "Sum",
+        "metrics": [
+          ["WikiStream/DataQuality", "DQGatePassed", "Layer", "bronze", { "label": "Bronze Pass", "color": "#2ca02c" }],
+          ["WikiStream/DataQuality", "DQGateFailed", "Layer", "bronze", { "label": "Bronze Fail", "color": "#d62728" }],
+          ["WikiStream/DataQuality", "DQGatePassed", "Layer", "silver", { "label": "Silver Pass", "color": "#7f7f7f" }],
+          ["WikiStream/DataQuality", "DQGateFailed", "Layer", "silver", { "label": "Silver Fail", "color": "#ff7f0e" }],
+          ["WikiStream/DataQuality", "DQGatePassed", "Layer", "gold", { "label": "Gold Pass", "color": "#ffd700" }],
+          ["WikiStream/DataQuality", "DQGateFailed", "Layer", "gold", { "label": "Gold Fail", "color": "#9467bd" }]
+        ],
+        "yAxis": { "left": { "min": 0 } }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 8,
+      "y": 14,
+      "width": 8,
+      "height": 5,
+      "properties": {
+        "title": "ECS Producer Health",
+        "region": "${region}",
+        "view": "timeSeries",
+        "period": 60,
+        "metrics": [
+          ["AWS/ECS", "CPUUtilization", "ClusterName", "${ecs_cluster_name}", "ServiceName", "${ecs_service_name}", { "stat": "Average", "color": "#1f77b4", "label": "CPU %" }],
+          ["AWS/ECS", "MemoryUtilization", "ClusterName", "${ecs_cluster_name}", "ServiceName", "${ecs_service_name}", { "stat": "Average", "color": "#ff7f0e", "label": "Memory %" }],
+          ["AWS/ECS", "RunningTaskCount", "ClusterName", "${ecs_cluster_name}", "ServiceName", "${ecs_service_name}", { "stat": "Average", "color": "#2ca02c", "label": "Tasks", "yAxis": "right" }]
+        ],
+        "yAxis": {
+          "left": { "min": 0, "max": 100, "label": "Percent" },
+          "right": { "min": 0, "max": 5, "label": "Count" }
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "x": 16,
+      "y": 14,
+      "width": 8,
+      "height": 5,
+      "properties": {
+        "title": "MSK Kafka Throughput",
+        "region": "${region}",
+        "view": "timeSeries",
+        "period": 60,
+        "stat": "Average",
+        "metrics": [
+          ["AWS/Kafka", "BytesInPerSec", "Cluster Name", "${msk_cluster_name}", { "color": "#2ca02c", "label": "Bytes In/s" }],
+          ["AWS/Kafka", "BytesOutPerSec", "Cluster Name", "${msk_cluster_name}", { "color": "#1f77b4", "label": "Bytes Out/s" }],
+          ["AWS/Kafka", "MessagesInPerSec", "Cluster Name", "${msk_cluster_name}", { "color": "#ff7f0e", "label": "Msgs/s", "yAxis": "right" }]
+        ],
+        "yAxis": {
+          "left": { "min": 0, "label": "Bytes/sec" },
+          "right": { "min": 0, "label": "Messages/sec" }
+        }
+      }
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 19,
+      "width": 12,
+      "height": 5,
+      "properties": {
+        "markdown": "## WikiStream Pipeline SLA Targets\n\n| Layer | Target Latency | Target Pass Rate |\n|-------|----------------|------------------|\n| Bronze (Streaming) | ≤3 min P95 | 99% |\n| Silver (Batch) | ≤2 min | 100% |\n| Gold (Batch) | ≤2 min | 100% |\n| **End-to-End** | **≤5 min** | **100%** |\n\n**Architecture:** Producer → Kafka → Bronze → DQ → Silver → DQ → Gold → DQ\n\n**Quick Links:**\n- [EMR Serverless](https://${region}.console.aws.amazon.com/emr/home?region=${region}#/serverless/applications/${emr_app_id})\n- [Step Functions](https://${region}.console.aws.amazon.com/states/home?region=${region}#/statemachines)\n- [S3 Tables](https://${region}.console.aws.amazon.com/s3tables/home?region=${region})\n- [CloudWatch Logs](https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#logsV2:log-groups/log-group/$252Faws$252Femr-serverless$252F${name_prefix})"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12,
+      "y": 19,
+      "width": 12,
+      "height": 5,
+      "properties": {
+        "title": "Pipeline Activity (Last 3 Hours)",
+        "region": "${region}",
+        "view": "bar",
+        "period": 300,
+        "stat": "Sum",
+        "metrics": [
+          ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#2ca02c", "label": "Success" }],
+          ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#d62728", "label": "Failed" }]
+        ],
+        "yAxis": { "left": { "min": 0 } }
+      }
+    }
+  ]
+}

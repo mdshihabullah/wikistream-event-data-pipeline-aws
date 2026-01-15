@@ -14,8 +14,10 @@
 #   9. Cleans up CloudWatch logs
 #
 # Usage:
-#   ./scripts/destroy_all.sh          # Interactive confirmation
-#   ./scripts/destroy_all.sh --force  # Skip confirmation (CI/CD)
+#   ./scripts/destroy_all.sh              # Destroy dev environment (default)
+#   ./scripts/destroy_all.sh staging      # Destroy staging environment
+#   ./scripts/destroy_all.sh prod         # Destroy prod environment
+#   ./scripts/destroy_all.sh dev --force  # Skip confirmation (CI/CD)
 #
 # Can be run multiple times safely (idempotent)
 # =============================================================================
@@ -25,9 +27,40 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 AWS_PROFILE="${AWS_PROFILE:-neuefische}"
 
+# Parse Arguments
+ENVIRONMENT="dev"
+FORCE_FLAG=""
+
+for arg in "$@"; do
+    case $arg in
+        dev|staging|prod)
+            ENVIRONMENT="$arg"
+            ;;
+        --force)
+            FORCE_FLAG="--force"
+            ;;
+        *)
+            echo "Unknown argument: $arg"
+            echo "Usage: $0 [dev|staging|prod] [--force]"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate environment
+if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|prod)$ ]]; then
+    echo "Invalid environment: $ENVIRONMENT"
+    echo "Valid environments: dev, staging, prod"
+    exit 1
+fi
+
+# Set name prefix based on environment
+NAME_PREFIX="wikistream-${ENVIRONMENT}"
+
 # Export AWS_PROFILE so all AWS CLI commands inherit it
 export AWS_PROFILE
 export AWS_REGION
+export ENVIRONMENT
 
 # Colors for output
 RED='\033[0;31m'
@@ -46,8 +79,11 @@ log_step() { echo -e "\n${YELLOW}━━━━━━━━━━━━━━━�
 # CONFIRMATION
 # =============================================================================
 echo ""
-echo "🚨 FULL DESTROY - WikiStream Infrastructure"
+echo "🚨 FULL DESTROY - WikiStream Infrastructure (${ENVIRONMENT})"
 echo "============================================="
+echo ""
+echo "Environment: ${ENVIRONMENT}"
+echo "Name Prefix: ${NAME_PREFIX}"
 echo ""
 echo "⚠️  WARNING: This will DELETE EVERYTHING including:"
 echo "  ✗ All EMR Serverless jobs and application"
@@ -62,13 +98,13 @@ echo ""
 echo "This action is IRREVERSIBLE!"
 echo ""
 
-if [ "$1" != "--force" ]; then
-    read -p "Type 'DELETE EVERYTHING' to confirm: " confirm
-    if [ "$confirm" != "DELETE EVERYTHING" ]; then
-        log_error "Cancelled. You must type 'DELETE EVERYTHING' exactly."
+if [ -z "$FORCE_FLAG" ]; then
+    read -p "Type 'DELETE ${ENVIRONMENT^^}' to confirm: " confirm
+    if [ "$confirm" != "DELETE ${ENVIRONMENT^^}" ]; then
+        log_error "Cancelled. You must type 'DELETE ${ENVIRONMENT^^}' exactly."
         echo ""
         echo "Tip: Use --force flag to skip confirmation:"
-        echo "  ./scripts/destroy_all.sh --force"
+        echo "  ./scripts/destroy_all.sh ${ENVIRONMENT} --force"
         exit 1
     fi
 else
@@ -136,7 +172,7 @@ DELETION_STATUS["eventbridge"]="done"
 # =============================================================================
 log_step "STEP 2: Stopping Step Functions Executions"
 
-SFN_ARNS=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query 'stateMachines[?contains(name,`wikistream`)].stateMachineArn' --output text 2>/dev/null || echo "")
+SFN_ARNS=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query "stateMachines[?contains(name,\`${NAME_PREFIX}\`)].stateMachineArn" --output text 2>/dev/null || echo "")
 if [ -n "$SFN_ARNS" ]; then
     for SFN_ARN in $SFN_ARNS; do
         SFN_NAME=$(basename "$SFN_ARN")
@@ -162,7 +198,7 @@ DELETION_STATUS["stepfunctions"]="done"
 # =============================================================================
 log_step "STEP 3: Cancelling EMR Serverless Jobs"
 
-EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query 'applications[?contains(name,`wikistream`)].[id,name,state]' --output text 2>/dev/null || echo "")
+EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query "applications[?contains(name,\`${NAME_PREFIX}\`)].[id,name,state]" --output text 2>/dev/null || echo "")
 
 if [ -n "$EMR_APPS" ]; then
     while IFS=$'\t' read -r APP_ID APP_NAME APP_STATE; do
@@ -208,7 +244,7 @@ DELETION_STATUS["emr_jobs"]="done"
 log_step "STEP 4: Stopping EMR Serverless Applications"
 
 # Re-fetch in case state changed
-EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query 'applications[?contains(name,`wikistream`)].[id,name,state]' --output text 2>/dev/null || echo "")
+EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query "applications[?contains(name,\`${NAME_PREFIX}\`)].[id,name,state]" --output text 2>/dev/null || echo "")
 
 if [ -n "$EMR_APPS" ]; then
     while IFS=$'\t' read -r APP_ID APP_NAME APP_STATE; do
@@ -245,7 +281,7 @@ DELETION_STATUS["emr_app"]="done"
 # =============================================================================
 log_step "STEP 5: Stopping ECS Services"
 
-ECS_CLUSTERS=$(aws ecs list-clusters --profile $AWS_PROFILE --query 'clusterArns[?contains(@,`wikistream`)]' --output text 2>/dev/null || echo "")
+ECS_CLUSTERS=$(aws ecs list-clusters --profile $AWS_PROFILE --query "clusterArns[?contains(@,\`${NAME_PREFIX}\`)]" --output text 2>/dev/null || echo "")
 if [ -n "$ECS_CLUSTERS" ]; then
     for CLUSTER_ARN in $ECS_CLUSTERS; do
         CLUSTER_NAME=$(basename "$CLUSTER_ARN")
@@ -282,7 +318,7 @@ if [ "$BACKEND_EXISTS" == "yes" ] || [ -d ".terraform" ]; then
     # Initialize with dynamic backend configuration (same as create_infra.sh)
     INIT_OUTPUT=$(terraform init -upgrade -input=false -reconfigure \
         -backend-config="bucket=${STATE_BUCKET}" \
-        -backend-config="key=wikistream/terraform.tfstate" \
+        -backend-config="key=wikistream/${ENVIRONMENT}/terraform.tfstate" \
         -backend-config="region=${AWS_REGION}" \
         -backend-config="dynamodb_table=${LOCK_TABLE}" \
         -backend-config="encrypt=true" 2>&1)
@@ -292,8 +328,15 @@ if [ "$BACKEND_EXISTS" == "yes" ] || [ -d ".terraform" ]; then
     echo "$INIT_OUTPUT" | grep -v "^$" || true
     
     if [ $INIT_EXIT_CODE -eq 0 ]; then
-        log_info "Running terraform destroy..."
+        log_info "Running terraform destroy for ${ENVIRONMENT} environment..."
+        TFVARS_FILE="environments/${ENVIRONMENT}.tfvars"
+        if [ -f "$TFVARS_FILE" ]; then
+            TFVARS_ARG="-var-file=${TFVARS_FILE}"
+        else
+            TFVARS_ARG=""
+        fi
         if terraform destroy -auto-approve -input=false \
+            ${TFVARS_ARG} \
             -var="aws_current_profile=${AWS_PROFILE}" \
             -var="aws_region=${AWS_REGION}" 2>&1; then
             log_success "Terraform destroy completed"
@@ -318,7 +361,7 @@ cd "$PROJECT_ROOT"
 # =============================================================================
 log_step "STEP 7: Deleting S3 Tables"
 
-TABLE_BUCKET_ARN="arn:aws:s3tables:${AWS_REGION}:${AWS_ACCOUNT_ID}:bucket/wikistream-dev-tables"
+TABLE_BUCKET_ARN="arn:aws:s3tables:${AWS_REGION}:${AWS_ACCOUNT_ID}:bucket/${NAME_PREFIX}-tables"
 S3_TABLES_DELETED=0
 S3_TABLES_TOTAL=0
 
@@ -370,7 +413,7 @@ fi
 # =============================================================================
 log_step "STEP 8: Deleting S3 Data Bucket"
 
-DATA_BUCKET="wikistream-dev-data-${AWS_ACCOUNT_ID}"
+DATA_BUCKET="${NAME_PREFIX}-data-${AWS_ACCOUNT_ID}"
 
 if aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --no-cli-pager 2>/dev/null; then
     log_info "Emptying bucket: $DATA_BUCKET"
@@ -465,7 +508,7 @@ if [ -n "$LAMBDA_LOGS" ]; then
 fi
 
 # Delete dashboard
-aws cloudwatch delete-dashboards --profile $AWS_PROFILE --dashboard-names "wikistream-dev-pipeline-dashboard" 2>/dev/null && \
+aws cloudwatch delete-dashboards --profile $AWS_PROFILE --dashboard-names "${NAME_PREFIX}-pipeline-dashboard" 2>/dev/null && \
     log_info "Deleted CloudWatch dashboard" || true
 
 # Delete alarms
@@ -484,7 +527,7 @@ DELETION_STATUS["cloudwatch"]="done"
 log_step "STEP 11: Cleaning Up Remaining Resources"
 
 # Delete EMR applications
-EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query 'applications[?contains(name,`wikistream`)].id' --output text 2>/dev/null || echo "")
+EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query "applications[?contains(name,\`${NAME_PREFIX}\`)].id" --output text 2>/dev/null || echo "")
 if [ -n "$EMR_APPS" ]; then
     for APP_ID in $EMR_APPS; do
         log_info "Deleting EMR app: $APP_ID"
@@ -493,7 +536,7 @@ if [ -n "$EMR_APPS" ]; then
 fi
 
 # Delete MSK clusters
-MSK_CLUSTERS=$(aws kafka list-clusters --profile $AWS_PROFILE --query 'ClusterInfoList[?contains(ClusterName,`wikistream`)].ClusterArn' --output text 2>/dev/null || echo "")
+MSK_CLUSTERS=$(aws kafka list-clusters --profile $AWS_PROFILE --query "ClusterInfoList[?contains(ClusterName,\`${NAME_PREFIX}\`)].ClusterArn" --output text 2>/dev/null || echo "")
 if [ -n "$MSK_CLUSTERS" ]; then
     for CLUSTER_ARN in $MSK_CLUSTERS; do
         log_info "Deleting MSK cluster: $(basename "$CLUSTER_ARN")"
@@ -502,7 +545,7 @@ if [ -n "$MSK_CLUSTERS" ]; then
 fi
 
 # Delete ECS clusters (re-fetch to get current state)
-ECS_CLUSTERS=$(aws ecs list-clusters --profile $AWS_PROFILE --query 'clusterArns[?contains(@,`wikistream`)]' --output text 2>/dev/null || echo "")
+ECS_CLUSTERS=$(aws ecs list-clusters --profile $AWS_PROFILE --query "clusterArns[?contains(@,\`${NAME_PREFIX}\`)]" --output text 2>/dev/null || echo "")
 if [ -n "$ECS_CLUSTERS" ]; then
     for CLUSTER_ARN in $ECS_CLUSTERS; do
         CLUSTER_NAME=$(basename "$CLUSTER_ARN")
@@ -518,7 +561,7 @@ if [ -n "$ECS_CLUSTERS" ]; then
 fi
 
 # Delete Step Functions
-SFN_ARNS=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query 'stateMachines[?contains(name,`wikistream`)].stateMachineArn' --output text 2>/dev/null || echo "")
+SFN_ARNS=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query "stateMachines[?contains(name,\`${NAME_PREFIX}\`)].stateMachineArn" --output text 2>/dev/null || echo "")
 if [ -n "$SFN_ARNS" ]; then
     for SFN_ARN in $SFN_ARNS; do
         log_info "Deleting state machine: $(basename "$SFN_ARN")"
@@ -560,7 +603,7 @@ if [ -n "$LAMBDAS" ]; then
 fi
 
 # Delete SNS topics
-SNS_TOPICS=$(aws sns list-topics --profile $AWS_PROFILE --query 'Topics[?contains(TopicArn,`wikistream`)].TopicArn' --output text 2>/dev/null || echo "")
+SNS_TOPICS=$(aws sns list-topics --profile $AWS_PROFILE --query "Topics[?contains(TopicArn,\`${NAME_PREFIX}\`)].TopicArn" --output text 2>/dev/null || echo "")
 if [ -n "$SNS_TOPICS" ]; then
     for TOPIC in $SNS_TOPICS; do
         log_info "Deleting SNS topic: $(basename "$TOPIC")"
@@ -622,7 +665,7 @@ else
 fi
 
 # Verify Step Functions deleted
-SFN_CHECK=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query 'stateMachines[?contains(name,`wikistream`)].name' --output text 2>/dev/null || echo "")
+SFN_CHECK=$(aws stepfunctions list-state-machines --profile $AWS_PROFILE --query "stateMachines[?contains(name,\`${NAME_PREFIX}\`)].name" --output text 2>/dev/null || echo "")
 if [ -z "$SFN_CHECK" ]; then
     log_success "✓ Step Functions: deleted"
 else
@@ -631,7 +674,7 @@ else
 fi
 
 # Verify ECR repository deleted
-if ! aws ecr describe-repositories --profile $AWS_PROFILE --repository-names "wikistream-dev-producer" &>/dev/null; then
+if ! aws ecr describe-repositories --profile $AWS_PROFILE --repository-names "${NAME_PREFIX}-producer" &>/dev/null; then
     log_success "✓ ECR repository: deleted"
 else
     log_warning "ECR repository still exists"

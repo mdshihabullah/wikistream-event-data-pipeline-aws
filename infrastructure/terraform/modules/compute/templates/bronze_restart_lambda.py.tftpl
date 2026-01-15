@@ -1,0 +1,135 @@
+import json
+import boto3
+import os
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+emr_client = boto3.client('emr-serverless')
+sns_client = boto3.client('sns')
+
+def handler(event, context):
+    """
+    Lambda handler to restart Bronze streaming job when CloudWatch alarm triggers.
+    
+    Resource allocation optimized for 16 vCPU quota:
+    - Bronze streaming: 4 vCPU (1 driver 2 vCPU + 1 executor 2 vCPU)
+    - Leaves 12 vCPU for batch jobs (each ~4 vCPU)
+    """
+    logger.info(f"Received event: {json.dumps(event)}")
+    
+    app_id = os.environ['EMR_APP_ID']
+    role_arn = os.environ['EMR_ROLE_ARN']
+    s3_bucket = os.environ['S3_BUCKET']
+    s3_tables_arn = os.environ['S3_TABLES_ARN']
+    msk_bootstrap = os.environ['MSK_BOOTSTRAP']
+    sns_topic = os.environ['SNS_TOPIC_ARN']
+    
+    try:
+        # Check if Bronze job is already running
+        response = emr_client.list_job_runs(
+            applicationId=app_id,
+            states=['RUNNING', 'PENDING', 'SUBMITTED']
+        )
+        
+        bronze_jobs = [j for j in response.get('jobRuns', []) 
+                       if j.get('name') == 'bronze-streaming']
+        
+        if bronze_jobs:
+            logger.info(f"Bronze job already running: {bronze_jobs[0]['id']}")
+            return {
+                'statusCode': 200,
+                'body': json.dumps({'message': 'Bronze job already running', 'jobId': bronze_jobs[0]['id']})
+            }
+        
+        # Start new Bronze streaming job with resource-optimized allocation
+        iceberg_packages = (
+            "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.10.0,"
+            "software.amazon.s3tables:s3-tables-catalog-for-iceberg-runtime:0.1.8,"
+            "software.amazon.awssdk:bundle:2.29.0,"
+            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
+            "software.amazon.msk:aws-msk-iam-auth:2.2.0"
+        )
+        
+        spark_conf = (
+            f"--conf spark.driver.cores=1 "
+            f"--conf spark.driver.memory=2g "
+            f"--conf spark.executor.cores=2 "
+            f"--conf spark.executor.memory=4g "
+            f"--conf spark.executor.instances=1 "
+            f"--conf spark.dynamicAllocation.enabled=false "
+            f"--conf spark.jars.packages={iceberg_packages} "
+            f"--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions "
+            f"--conf spark.sql.adaptive.enabled=true "
+            f"--conf spark.sql.adaptive.coalescePartitions.enabled=true "
+            f"--conf spark.sql.iceberg.handle-timestamp-without-timezone=true "
+            f"--conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog "
+            f"--conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog "
+            f"--conf spark.sql.catalog.s3tablesbucket.warehouse={s3_tables_arn} "
+            f"--conf spark.sql.catalog.s3tablesbucket.client.region=us-east-1"
+        )
+        
+        response = emr_client.start_job_run(
+            applicationId=app_id,
+            executionRoleArn=role_arn,
+            name='bronze-streaming',
+            jobDriver={
+                'sparkSubmit': {
+                    'entryPoint': f's3://{s3_bucket}/spark/jobs/bronze_streaming_job.py',
+                    'entryPointArguments': [msk_bootstrap, s3_bucket],
+                    'sparkSubmitParameters': spark_conf
+                }
+            },
+            configurationOverrides={
+                'monitoringConfiguration': {
+                    'cloudWatchLoggingConfiguration': {
+                        'enabled': True,
+                        'logGroupName': f'/aws/emr-serverless/${name_prefix}',
+                        'logStreamNamePrefix': 'bronze'
+                    },
+                    's3MonitoringConfiguration': {
+                        'logUri': f's3://{s3_bucket}/emr-serverless/logs/bronze/'
+                    }
+                }
+            }
+        )
+        
+        job_id = response['jobRunId']
+        logger.info(f"Started Bronze job: {job_id}")
+        
+        # Send notification
+        sns_client.publish(
+            TopicArn=sns_topic,
+            Subject='WikiStream Bronze Job Auto-Restarted',
+            Message=json.dumps({
+                'alert_type': 'BRONZE_JOB_RESTART',
+                'severity': 'INFO',
+                'job_id': job_id,
+                'application_id': app_id,
+                'resource_allocation': '4 vCPU (1 driver + 1 executor)',
+                'message': 'Bronze streaming job was automatically restarted after health check failure'
+            }, indent=2)
+        )
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'message': 'Bronze job restarted', 'jobId': job_id})
+        }
+        
+    except Exception as e:
+        logger.error(f"Error restarting Bronze job: {str(e)}")
+        
+        # Send error notification
+        sns_client.publish(
+            TopicArn=sns_topic,
+            Subject='WikiStream Bronze Job Restart FAILED',
+            Message=json.dumps({
+                'alert_type': 'BRONZE_JOB_RESTART_FAILED',
+                'severity': 'CRITICAL',
+                'error': str(e),
+                'message': 'Failed to restart Bronze streaming job - manual intervention required'
+            }, indent=2)
+        )
+        
+        raise

@@ -1,0 +1,90 @@
+{
+  "Comment": "Data quality checks (standalone) - Use batch-pipeline for scheduled runs",
+  "StartAt": "RunDataQualityJob",
+  "States": {
+    "RunDataQualityJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_app_id}",
+        "ExecutionRoleArn": "${emr_role_arn}",
+        "Name": "data-quality-check",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${data_bucket}/spark/jobs/data_quality_job.py",
+            "EntryPointArguments": ["${sns_topic_arn}"],
+            "SparkSubmitParameters": "${dq_spark_params}"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${name_prefix}",
+              "LogStreamNamePrefix": "data-quality"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${data_bucket}/emr-serverless/logs/data-quality/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.jobResult",
+      "TimeoutSeconds": ${job_timeout},
+      "Next": "RecordQualityMetrics",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyQualityFailure"
+      }]
+    },
+    "RecordQualityMetrics": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "QualityCheckCompleted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "all"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Success"
+    },
+    "NotifyQualityFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "WikiStream Data Quality Check Failure",
+        "Message.$": "States.Format('DATA_QUALITY_FAILURE | Severity: CRITICAL | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordQualityFailure"
+    },
+    "RecordQualityFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "QualityCheckFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "all"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "Fail": {
+      "Type": "Fail",
+      "Error": "DataQualityFailed",
+      "Cause": "Data quality checks failed"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}
