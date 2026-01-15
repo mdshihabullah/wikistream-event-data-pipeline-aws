@@ -84,6 +84,10 @@ if [ -z "$AWS_ACCOUNT_ID" ]; then
 fi
 log_info "AWS Account: $AWS_ACCOUNT_ID, Region: $AWS_REGION, Profile: $AWS_PROFILE"
 
+# Define backend configuration (must match create_infra.sh)
+STATE_BUCKET="wikistream-terraform-state-${AWS_ACCOUNT_ID}"
+LOCK_TABLE="wikistream-terraform-locks"
+
 # Track deletion status for final summary
 declare -A DELETION_STATUS
 DELETION_STATUS["eventbridge"]="pending"
@@ -269,21 +273,41 @@ log_step "STEP 6: Running Terraform Destroy"
 
 cd "$PROJECT_ROOT/infrastructure/terraform"
 
-# Check for remote state lock first
-if [ -f "terraform.tfstate" ] || [ -d ".terraform" ]; then
-    log_info "Initializing Terraform..."
-    terraform init -upgrade -input=false 2>&1 | grep -v "^$" || true
+# Check if backend bucket exists (indicates Terraform state may exist)
+BACKEND_EXISTS=$(aws s3api head-bucket --bucket "${STATE_BUCKET}" --profile $AWS_PROFILE --no-cli-pager 2>&1 && echo "yes" || echo "no")
+
+if [ "$BACKEND_EXISTS" == "yes" ] || [ -d ".terraform" ]; then
+    log_info "Initializing Terraform with backend: s3://${STATE_BUCKET}"
     
-    log_info "Running terraform destroy..."
-    if terraform destroy -auto-approve -input=false 2>&1; then
-        log_success "Terraform destroy completed"
-        DELETION_STATUS["terraform"]="done"
+    # Initialize with dynamic backend configuration (same as create_infra.sh)
+    INIT_OUTPUT=$(terraform init -upgrade -input=false -reconfigure \
+        -backend-config="bucket=${STATE_BUCKET}" \
+        -backend-config="key=wikistream/terraform.tfstate" \
+        -backend-config="region=${AWS_REGION}" \
+        -backend-config="dynamodb_table=${LOCK_TABLE}" \
+        -backend-config="encrypt=true" 2>&1)
+    INIT_EXIT_CODE=$?
+    
+    # Show output (filter empty lines)
+    echo "$INIT_OUTPUT" | grep -v "^$" || true
+    
+    if [ $INIT_EXIT_CODE -eq 0 ]; then
+        log_info "Running terraform destroy..."
+        if terraform destroy -auto-approve -input=false \
+            -var="aws_current_profile=${AWS_PROFILE}" \
+            -var="aws_region=${AWS_REGION}" 2>&1; then
+            log_success "Terraform destroy completed"
+            DELETION_STATUS["terraform"]="done"
+        else
+            log_warning "Terraform destroy had errors, continuing with CLI cleanup..."
+            DELETION_STATUS["terraform"]="partial"
+        fi
     else
-        log_warning "Terraform destroy had errors, continuing with CLI cleanup..."
-        DELETION_STATUS["terraform"]="partial"
+        log_warning "Terraform init failed (exit code: $INIT_EXIT_CODE), using CLI cleanup only"
+        DELETION_STATUS["terraform"]="skipped"
     fi
 else
-    log_warning "No Terraform state found, using CLI cleanup only"
+    log_warning "No Terraform backend found, using CLI cleanup only"
     DELETION_STATUS["terraform"]="skipped"
 fi
 
@@ -348,7 +372,7 @@ log_step "STEP 8: Deleting S3 Data Bucket"
 
 DATA_BUCKET="wikistream-dev-data-${AWS_ACCOUNT_ID}"
 
-if aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" 2>/dev/null; then
+if aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --no-cli-pager 2>/dev/null; then
     log_info "Emptying bucket: $DATA_BUCKET"
     
     # Fast delete all current objects
@@ -590,7 +614,7 @@ else
 fi
 
 # Verify S3 data bucket deleted
-if ! aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" 2>/dev/null; then
+if ! aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --no-cli-pager 2>/dev/null; then
     log_success "✓ S3 data bucket: deleted"
 else
     log_warning "S3 data bucket still exists"

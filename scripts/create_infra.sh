@@ -50,21 +50,103 @@ echo "  • CloudWatch Dashboard and Alarms"
 echo ""
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
-AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+AWS_PROFILE="${AWS_PROFILE:-neuefische}"
+
+# Export AWS_PROFILE so Terraform and AWS CLI subprocesses inherit it
+export AWS_PROFILE
+export AWS_REGION
+
+log_info "Using AWS Profile: ${AWS_PROFILE}"
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --profile $AWS_PROFILE --query Account --output text)
 
 # Clean up any existing one-time EventBridge schedules from previous runs
-EXISTING_SCHEDULE=$(aws scheduler list-schedules \
+EXISTING_SCHEDULE=$(aws scheduler list-schedules --profile $AWS_PROFILE \
     --name-prefix "wikistream-initial-batch" \
     --query 'Schedules[0].Name' \
     --output text 2>/dev/null || echo "None")
 if [ "$EXISTING_SCHEDULE" != "None" ] && [ -n "$EXISTING_SCHEDULE" ]; then
     log_info "Cleaning up existing one-time schedule: $EXISTING_SCHEDULE"
-    aws scheduler delete-schedule --name "$EXISTING_SCHEDULE" 2>/dev/null || true
+    aws scheduler delete-schedule --profile $AWS_PROFILE --name "$EXISTING_SCHEDULE" 2>/dev/null || true
 fi
 
 echo "📋 Configuration:"
 echo "   AWS Account: ${AWS_ACCOUNT_ID}"
 echo "   AWS Region:  ${AWS_REGION}"
+echo "   AWS Profile: ${AWS_PROFILE}"
+echo ""
+
+# =============================================================================
+# Pre-flight: Ensure Terraform Backend Exists
+# =============================================================================
+log_info "Checking Terraform backend resources..."
+
+STATE_BUCKET="wikistream-terraform-state-${AWS_ACCOUNT_ID}"
+LOCK_TABLE="wikistream-terraform-locks"
+
+# Check if S3 bucket exists
+if aws s3api head-bucket --bucket "${STATE_BUCKET}" --profile $AWS_PROFILE --no-cli-pager 2>/dev/null; then
+    log_success "Backend S3 bucket exists: ${STATE_BUCKET}"
+else
+    log_warning "Backend S3 bucket does not exist. Creating..."
+    
+    # Create S3 bucket
+    aws s3api create-bucket \
+        --bucket "${STATE_BUCKET}" \
+        --region "${AWS_REGION}" \
+        --profile $AWS_PROFILE \
+        --no-cli-pager
+    
+    # Enable versioning
+    aws s3api put-bucket-versioning \
+        --bucket "${STATE_BUCKET}" \
+        --versioning-configuration Status=Enabled \
+        --profile $AWS_PROFILE \
+        --no-cli-pager
+    
+    # Block public access
+    aws s3api put-public-access-block \
+        --bucket "${STATE_BUCKET}" \
+        --public-access-block-configuration \
+            "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" \
+        --profile $AWS_PROFILE \
+        --no-cli-pager
+    
+    # Enable encryption
+    aws s3api put-bucket-encryption \
+        --bucket "${STATE_BUCKET}" \
+        --server-side-encryption-configuration \
+            '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' \
+        --profile $AWS_PROFILE \
+        --no-cli-pager
+    
+    log_success "Backend S3 bucket created and configured: ${STATE_BUCKET}"
+fi
+
+# Check if DynamoDB table exists
+if aws dynamodb describe-table --table-name "${LOCK_TABLE}" --region "${AWS_REGION}" --profile $AWS_PROFILE 2>/dev/null >/dev/null; then
+    log_success "Backend DynamoDB table exists: ${LOCK_TABLE}"
+else
+    log_warning "Backend DynamoDB table does not exist. Creating..."
+    
+    aws dynamodb create-table \
+        --table-name "${LOCK_TABLE}" \
+        --attribute-definitions AttributeName=LockID,AttributeType=S \
+        --key-schema AttributeName=LockID,KeyType=HASH \
+        --billing-mode PAY_PER_REQUEST \
+        --region "${AWS_REGION}" \
+        --profile $AWS_PROFILE \
+        --no-cli-pager > /dev/null
+    
+    log_info "Waiting for DynamoDB table to become active..."
+    aws dynamodb wait table-exists \
+        --table-name "${LOCK_TABLE}" \
+        --region "${AWS_REGION}" \
+        --profile $AWS_PROFILE \
+        --no-cli-pager
+    
+    log_success "Backend DynamoDB table created: ${LOCK_TABLE}"
+fi
+
 echo ""
 
 # =============================================================================
@@ -73,12 +155,12 @@ echo ""
 echo "🛑 Step 0/7: Preparing EMR Serverless for updates..."
 
 # Find existing EMR app
-EMR_APP_ID=$(aws emr-serverless list-applications \
+EMR_APP_ID=$(aws emr-serverless list-applications --profile $AWS_PROFILE \
     --query 'applications[?contains(name,`wikistream`)].id' \
     --output text 2>/dev/null || echo "")
 
 if [ -n "$EMR_APP_ID" ]; then
-    EMR_STATE=$(aws emr-serverless get-application \
+    EMR_STATE=$(aws emr-serverless get-application --profile $AWS_PROFILE \
         --application-id "$EMR_APP_ID" \
         --query 'application.state' \
         --output text 2>/dev/null || echo "UNKNOWN")
@@ -89,7 +171,7 @@ if [ -n "$EMR_APP_ID" ]; then
         log_info "Cancelling any running jobs..."
         
         # Cancel all running/pending jobs
-        JOBS=$(aws emr-serverless list-job-runs \
+        JOBS=$(aws emr-serverless list-job-runs --profile $AWS_PROFILE \
             --application-id "$EMR_APP_ID" \
             --states RUNNING PENDING SUBMITTED SCHEDULED \
             --query 'jobRuns[*].id' \
@@ -97,7 +179,7 @@ if [ -n "$EMR_APP_ID" ]; then
         
         for JOB_ID in $JOBS; do
             log_info "  Cancelling job: $JOB_ID"
-            aws emr-serverless cancel-job-run \
+            aws emr-serverless cancel-job-run --profile $AWS_PROFILE \
                 --application-id "$EMR_APP_ID" \
                 --job-run-id "$JOB_ID" 2>/dev/null || true
         done
@@ -106,7 +188,7 @@ if [ -n "$EMR_APP_ID" ]; then
         if [ -n "$JOBS" ]; then
             log_info "Waiting for jobs to cancel..."
             for i in {1..24}; do
-                STILL_RUNNING=$(aws emr-serverless list-job-runs \
+                STILL_RUNNING=$(aws emr-serverless list-job-runs --profile $AWS_PROFILE \
                     --application-id "$EMR_APP_ID" \
                     --states RUNNING PENDING SUBMITTED CANCELLING \
                     --query 'jobRuns[*].id' \
@@ -120,11 +202,11 @@ if [ -n "$EMR_APP_ID" ]; then
         
         # Stop EMR application
         log_info "Stopping EMR application..."
-        aws emr-serverless stop-application --application-id "$EMR_APP_ID" 2>/dev/null || true
+        aws emr-serverless stop-application --profile $AWS_PROFILE --application-id "$EMR_APP_ID" 2>/dev/null || true
         
         # Wait for STOPPED state
         for i in {1..24}; do
-            STATE=$(aws emr-serverless get-application \
+            STATE=$(aws emr-serverless get-application --profile $AWS_PROFILE \
                 --application-id "$EMR_APP_ID" \
                 --query 'application.state' \
                 --output text 2>/dev/null || echo "STOPPED")
@@ -151,17 +233,24 @@ echo ""
 
 cd "${TERRAFORM_DIR}"
 
-# Initialize Terraform
-log_info "Initializing Terraform..."
-terraform init -upgrade -input=false
+# Initialize Terraform with dynamic backend (supports any AWS account)
+log_info "Initializing Terraform with backend: s3://${STATE_BUCKET}"
+terraform init -upgrade -input=false -reconfigure \
+    -backend-config="bucket=${STATE_BUCKET}" \
+    -backend-config="key=wikistream/terraform.tfstate" \
+    -backend-config="region=${AWS_REGION}" \
+    -backend-config="dynamodb_table=${LOCK_TABLE}" \
+    -backend-config="encrypt=true"
 
 # Validate configuration
 log_info "Validating configuration..."
 terraform validate
 
-# Apply configuration
+# Apply configuration with profile variable
 log_info "Applying Terraform configuration..."
-terraform apply -auto-approve -input=false
+terraform apply -auto-approve -input=false \
+    -var="aws_current_profile=${AWS_PROFILE}" \
+    -var="aws_region=${AWS_REGION}"
 
 log_success "Terraform apply completed!"
 
@@ -174,7 +263,7 @@ echo "🗄️  Step 1.5/7: Configuring S3 Tables default storage class..."
 S3_TABLES_ARN=$(terraform output -raw s3_tables_bucket_arn)
 
 log_info "Setting Intelligent-Tiering for new tables..."
-aws s3tables put-table-bucket-storage-class \
+aws s3tables put-table-bucket-storage-class --profile $AWS_PROFILE \
     --table-bucket-arn "${S3_TABLES_ARN}" \
     --storage-class-configuration storageClass=INTELLIGENT_TIERING \
     --region ${AWS_REGION} 2>/dev/null || true
@@ -213,13 +302,13 @@ echo ""
 echo "🐳 Step 3/7: Checking Docker image..."
 
 # Check if image exists in ECR
-IMAGE_COUNT=$(aws ecr list-images --repository-name wikistream-dev-producer --query 'length(imageIds)' --output text 2>/dev/null || echo "0")
+IMAGE_COUNT=$(aws ecr list-images --profile $AWS_PROFILE --repository-name wikistream-dev-producer --query 'length(imageIds)' --output text --no-cli-pager 2>/dev/null || echo "0")
 
 if [ "$IMAGE_COUNT" = "0" ] || [ "$IMAGE_COUNT" = "None" ]; then
     log_info "No image found in ECR, building and pushing..."
     
     # Login to ECR
-    aws ecr get-login-password --region ${AWS_REGION} | \
+    aws ecr get-login-password --profile $AWS_PROFILE --region ${AWS_REGION} --no-cli-pager | \
         docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
     
     # Build image
@@ -246,7 +335,7 @@ echo "📦 Step 4/7: Uploading Spark jobs to S3..."
 cd "${PROJECT_ROOT}"
 
 # Upload main job files (excluding dq directory)
-aws s3 cp spark/jobs/ s3://${DATA_BUCKET}/spark/jobs/ --recursive --quiet \
+aws s3 cp --profile $AWS_PROFILE spark/jobs/ s3://${DATA_BUCKET}/spark/jobs/ --recursive --quiet \
     --exclude "__pycache__/*" --exclude "*.pyc" --exclude "dq/*"
 
 # Create and upload DQ module as zip (for --py-files)
@@ -270,22 +359,22 @@ zip -rq ../dq.zip . -x "*/__pycache__/*" -x "*.pyc" -x "*.dist-info/*"
 cd ..
 
 # Upload to S3
-aws s3 cp dq.zip s3://${DATA_BUCKET}/spark/jobs/dq.zip --quiet
+aws s3 cp --profile $AWS_PROFILE dq.zip s3://${DATA_BUCKET}/spark/jobs/dq.zip --quiet
 
 # Cleanup
 rm -rf dq_package dq.zip
 cd "${PROJECT_ROOT}"
 
 # Upload schemas
-aws s3 cp spark/schemas/ s3://${DATA_BUCKET}/spark/schemas/ --recursive --quiet \
+aws s3 cp --profile $AWS_PROFILE spark/schemas/ s3://${DATA_BUCKET}/spark/schemas/ --recursive --quiet \
     --exclude "__pycache__/*" --exclude "*.pyc" 2>/dev/null || true
 
 # Upload config
-aws s3 cp config/ s3://${DATA_BUCKET}/config/ --recursive --quiet \
+aws s3 cp --profile $AWS_PROFILE config/ s3://${DATA_BUCKET}/config/ --recursive --quiet \
     --exclude "__pycache__/*" --exclude "*.pyc" 2>/dev/null || true
 
 # Verify upload
-JOB_COUNT=$(aws s3 ls s3://${DATA_BUCKET}/spark/jobs/ --recursive | wc -l | tr -d ' ')
+JOB_COUNT=$(aws s3 ls --profile $AWS_PROFILE s3://${DATA_BUCKET}/spark/jobs/ --recursive | wc -l | tr -d ' ')
 log_success "Uploaded ${JOB_COUNT} Spark job files (including DQ module)"
 
 # =============================================================================
@@ -295,7 +384,7 @@ echo ""
 echo "🔄 Step 5/7: Starting ECS producer service..."
 
 # Update service to desired count 1 and force new deployment
-aws ecs update-service \
+aws ecs update-service --profile $AWS_PROFILE \
     --cluster ${ECS_CLUSTER} \
     --service wikistream-dev-producer \
     --desired-count 1 \
@@ -313,19 +402,19 @@ echo "🚀 Step 6/7: Starting Bronze streaming job..."
 # First, ensure EMR app is STARTED
 log_info "Ensuring EMR application is started..."
 
-EMR_STATE=$(aws emr-serverless get-application \
+EMR_STATE=$(aws emr-serverless get-application --profile $AWS_PROFILE \
     --application-id "$EMR_APP_ID" \
     --query 'application.state' \
     --output text 2>/dev/null || echo "STOPPED")
 
 if [ "$EMR_STATE" != "STARTED" ]; then
     log_info "Starting EMR application..."
-    aws emr-serverless start-application --application-id "$EMR_APP_ID" 2>/dev/null || true
+    aws emr-serverless start-application --profile $AWS_PROFILE --application-id "$EMR_APP_ID" 2>/dev/null || true
     
     # Wait for STARTED state
     log_info "Waiting for EMR to start..."
     for i in {1..36}; do  # Max 3 minutes
-        STATE=$(aws emr-serverless get-application \
+        STATE=$(aws emr-serverless get-application --profile $AWS_PROFILE \
             --application-id "$EMR_APP_ID" \
             --query 'application.state' \
             --output text 2>/dev/null || echo "UNKNOWN")
@@ -341,13 +430,13 @@ fi
 
 # Wait for MSK to be fully ready for connections
 log_info "Waiting for MSK cluster to be ready..."
-MSK_CLUSTER_ARN=$(aws kafka list-clusters \
+MSK_CLUSTER_ARN=$(aws kafka list-clusters --profile $AWS_PROFILE \
     --query 'ClusterInfoList[?contains(ClusterName,`wikistream`)].ClusterArn' \
     --output text 2>/dev/null || echo "")
 
 if [ -n "$MSK_CLUSTER_ARN" ]; then
     for i in {1..12}; do  # Max 2 minutes
-        MSK_STATE=$(aws kafka describe-cluster --cluster-arn "$MSK_CLUSTER_ARN" \
+        MSK_STATE=$(aws kafka describe-cluster --profile $AWS_PROFILE --cluster-arn "$MSK_CLUSTER_ARN" \
             --query 'ClusterInfo.State' --output text 2>/dev/null || echo "UNKNOWN")
         if [ "$MSK_STATE" == "ACTIVE" ]; then
             log_success "MSK cluster is ACTIVE"
@@ -370,7 +459,7 @@ sleep 30
 # Resource allocation: 4 vCPU total (1 driver + 1 executor) to fit within 16 vCPU quota
 # This leaves 12 vCPU available for batch jobs to run without resource contention
 log_info "Submitting Bronze streaming job (4 vCPU - optimized for 16 vCPU quota)..."
-JOB_RUN_ID=$(aws emr-serverless start-job-run \
+JOB_RUN_ID=$(aws emr-serverless start-job-run --profile $AWS_PROFILE \
     --application-id ${EMR_APP_ID} \
     --execution-role-arn ${EMR_ROLE_ARN} \
     --name "bronze-streaming" \
@@ -413,7 +502,7 @@ SCHEDULE_TIME=$(date -u -v+15M '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '+
 SCHEDULE_NAME="wikistream-initial-batch-$(date +%s)"
 
 # Get the EventBridge scheduler role ARN (same as the eventbridge_sfn role)
-SCHEDULER_ROLE_ARN=$(aws iam get-role --role-name wikistream-dev-eventbridge-sfn-role \
+SCHEDULER_ROLE_ARN=$(aws iam get-role --profile $AWS_PROFILE --role-name wikistream-dev-eventbridge-sfn-role \
     --query 'Role.Arn' --output text 2>/dev/null || echo "")
 
 if [ -z "$SCHEDULER_ROLE_ARN" ]; then
@@ -423,7 +512,7 @@ else
     # Create one-time EventBridge Scheduler to trigger Step Function
     log_info "Creating one-time schedule for ${SCHEDULE_TIME} UTC..."
     
-    aws scheduler create-schedule \
+    aws scheduler create-schedule --profile $AWS_PROFILE \
         --name "$SCHEDULE_NAME" \
         --schedule-expression "at(${SCHEDULE_TIME})" \
         --flexible-time-window '{"Mode": "OFF"}' \

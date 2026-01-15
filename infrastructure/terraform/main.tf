@@ -23,12 +23,16 @@ terraform {
     }
   }
 
+  # Backend configuration is provided dynamically during terraform init
+  # This allows the scripts to work with any AWS account/profile
+  # Usage: terraform init -backend-config="bucket=wikistream-terraform-state-<ACCOUNT_ID>" ...
   backend "s3" {
-    bucket         = "wikistream-terraform-state-160884803380"
-    key            = "wikistream/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "wikistream-terraform-locks"
-    encrypt        = true
+    # Values provided via -backend-config in create_infra.sh and destroy_all.sh:
+    # - bucket         = "wikistream-terraform-state-${AWS_ACCOUNT_ID}"
+    # - key            = "wikistream/terraform.tfstate"
+    # - region         = "${AWS_REGION}"
+    # - dynamodb_table = "wikistream-terraform-locks"
+    # - encrypt        = true
   }
 }
 
@@ -740,7 +744,7 @@ resource "aws_ecr_lifecycle_policy" "producer" {
 # EMR SERVERLESS APPLICATION (Optimized for 16 vCPU quota)
 # =============================================================================
 # 
-# CURRENT QUOTA: 16 vCPU (default AWS quota)
+# CURRENT QUOTA: 16 vCPU (default EMR Serverless limit)
 # To request increase: AWS Console → Service Quotas → EMR Serverless
 #   → "Max concurrent vCPUs per account" → Request 32 vCPU
 #
@@ -766,9 +770,9 @@ resource "aws_emrserverless_application" "spark" {
 
   # Maximum capacity aligned with default 16 vCPU quota
   # Bronze streaming (4 vCPU) + batch job (4 vCPU) = 8 vCPU typical usage
-  # Setting to 16 vCPU to match default AWS quota
+  # Setting to 16 vCPU to match account quota limit
   maximum_capacity {
-    cpu    = "16 vCPU" # Default AWS quota (increase to 32 if needed)
+    cpu    = "16 vCPU" # Current account quota (increase to 32 if approved)
     memory = "64 GB"   # 4 GB per vCPU ratio
     disk   = "200 GB"  # For Spark shuffle and temp data
   }
