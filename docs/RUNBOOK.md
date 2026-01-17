@@ -54,21 +54,26 @@ cd ../..
 
 | Action | Command |
 |--------|---------|
-| **Full Create** | `./scripts/create_infra.sh` |
-| **Full Destroy** | `./scripts/destroy_all.sh` |
-| **Apply Terraform Changes** | `cd infrastructure/terraform && terraform apply` |
+| **Full Create (dev)** | `./scripts/create_infra.sh` |
+| **Full Create (staging)** | `./scripts/create_infra.sh staging` |
+| **Full Create (prod)** | `./scripts/create_infra.sh prod` |
+| **Full Destroy (dev)** | `./scripts/destroy_all.sh` |
+| **Full Destroy (staging)** | `./scripts/destroy_all.sh staging` |
+| **Apply Terraform Changes** | `cd infrastructure/terraform && terraform apply -var-file=environments/dev.tfvars` |
 | **View Terraform State** | `terraform show` |
-| **Plan Changes** | `terraform plan -out=tfplan` |
+| **Plan Changes** | `terraform plan -var-file=environments/dev.tfvars -out=tfplan` |
 
 ### 1.3 ECS Producer Commands
 
 | Action | Command |
 |--------|---------|
-| **Start Producer** | `aws ecs update-service --cluster $ECS_CLUSTER --service wikistream-dev-producer --desired-count 1` |
-| **Stop Producer** | `aws ecs update-service --cluster $ECS_CLUSTER --service wikistream-dev-producer --desired-count 0` |
-| **View Logs** | `aws logs tail /ecs/wikistream-dev-producer --follow --since 5m` |
-| **Force New Deployment** | `aws ecs update-service --cluster $ECS_CLUSTER --service wikistream-dev-producer --force-new-deployment` |
-| **Check Task Status** | `aws ecs list-tasks --cluster $ECS_CLUSTER --service wikistream-dev-producer` |
+| **Start Producer** | `aws ecs update-service --cluster $ECS_CLUSTER --service ${NAME_PREFIX}-producer --desired-count 1` |
+| **Stop Producer** | `aws ecs update-service --cluster $ECS_CLUSTER --service ${NAME_PREFIX}-producer --desired-count 0` |
+| **View Logs** | `aws logs tail /ecs/${NAME_PREFIX}-producer --follow --since 5m` |
+| **Force New Deployment** | `aws ecs update-service --cluster $ECS_CLUSTER --service ${NAME_PREFIX}-producer --force-new-deployment` |
+| **Check Task Status** | `aws ecs list-tasks --cluster $ECS_CLUSTER --service ${NAME_PREFIX}-producer` |
+
+> **Note:** Replace `${NAME_PREFIX}` with your environment prefix (e.g., `wikistream-dev`, `wikistream-staging`)
 
 ### 1.4 EMR Serverless Commands
 
@@ -86,8 +91,8 @@ cd ../..
 
 | Action | Command |
 |--------|---------|
-| **List Executions** | `aws stepfunctions list-executions --state-machine-arn arn:aws:states:us-east-1:$AWS_ACCOUNT_ID:stateMachine:wikistream-dev-batch-pipeline --max-results 5` |
-| **Start Batch Pipeline** | `aws stepfunctions start-execution --state-machine-arn arn:aws:states:us-east-1:$AWS_ACCOUNT_ID:stateMachine:wikistream-dev-batch-pipeline --input '{}'` |
+| **List Executions** | `aws stepfunctions list-executions --state-machine-arn arn:aws:states:us-east-1:$AWS_ACCOUNT_ID:stateMachine:${NAME_PREFIX}-batch-pipeline --max-results 5` |
+| **Start Batch Pipeline** | `aws stepfunctions start-execution --state-machine-arn arn:aws:states:us-east-1:$AWS_ACCOUNT_ID:stateMachine:${NAME_PREFIX}-batch-pipeline --input '{}'` |
 | **Stop Execution** | `aws stepfunctions stop-execution --execution-arn <EXECUTION_ARN> --cause "Manual stop"` |
 | **Get Execution Status** | `aws stepfunctions describe-execution --execution-arn <EXECUTION_ARN>` |
 
@@ -613,42 +618,96 @@ aws stepfunctions start-execution \
 
 ## 6. Modifying Infrastructure
 
-### 6.1 Changing Terraform Variables
+### 6.0 Terraform Module Structure (NEW)
 
-**File:** `infrastructure/terraform/variables.tf`
+The Terraform codebase is now organized into reusable modules:
 
-```hcl
-variable "project_name" {
-  default = "wikistream"
-}
-
-variable "environment" {
-  default = "dev"  # Change to "staging" or "prod"
-}
-
-variable "aws_region" {
-  default = "us-east-1"
-}
-
-variable "vpc_cidr" {
-  default = "10.0.0.0/16"
-}
-
-variable "alert_email" {
-  default = "mrshihabullah@gmail.com"  # Change to your email
-}
+```
+infrastructure/terraform/
+├── main.tf                    # Root module - orchestrates all modules
+├── variables.tf               # All configurable parameters
+├── outputs.tf                 # Outputs for scripts
+├── versions.tf                # Terraform version constraints
+├── backend.tf                 # S3 backend configuration
+├── providers.tf               # AWS provider configuration
+├── locals.tf                  # Local values
+├── data.tf                    # Data sources
+├── environments/              # Environment-specific tfvars
+│   ├── dev.tfvars
+│   ├── staging.tfvars
+│   └── prod.tfvars
+└── modules/
+    ├── networking/            # VPC, subnets, security groups
+    ├── storage/               # S3, S3 Tables
+    ├── streaming/             # MSK Kafka
+    ├── compute/               # ECS, EMR Serverless, ECR, Lambda
+    ├── orchestration/         # Step Functions, EventBridge
+    │   └── templates/         # JSON templates for Step Functions
+    └── monitoring/            # CloudWatch, SNS, alarms
 ```
 
-**After changes:**
+### 6.1 Changing Environment Configuration
+
+**For environment-specific changes, modify the appropriate tfvars file:**
+
+| Environment | File | When to Use |
+|-------------|------|-------------|
+| Development | `environments/dev.tfvars` | Local testing, portfolio demo |
+| Staging | `environments/staging.tfvars` | Pre-production testing |
+| Production | `environments/prod.tfvars` | Live workloads |
+
+**Example - Increase EMR capacity for staging:**
+```hcl
+# environments/staging.tfvars
+emr_max_vcpu             = "32 vCPU"
+emr_max_memory           = "128 GB"
+emr_prewarm_driver_count = 2
+```
+
+**Apply changes:**
 ```bash
 cd infrastructure/terraform
-terraform plan  # Review changes
-terraform apply # Apply changes
+terraform plan -var-file=environments/staging.tfvars   # Review changes
+terraform apply -var-file=environments/staging.tfvars  # Apply changes
 ```
 
-### 6.2 Changing EMR Serverless Configuration
+### 6.2 Multi-Environment Workflow
 
-**File:** `infrastructure/terraform/main.tf` (lines 762-815)
+**Deploy different environments:**
+```bash
+# Development (default)
+./scripts/create_infra.sh
+
+# Staging
+./scripts/create_infra.sh staging
+
+# Production (requires confirmation)
+./scripts/create_infra.sh prod
+```
+
+**Destroy environments:**
+```bash
+./scripts/destroy_all.sh          # Destroy dev
+./scripts/destroy_all.sh staging  # Destroy staging
+./scripts/destroy_all.sh prod     # Destroy prod (requires "DELETE PROD")
+```
+
+**Key differences between environments:**
+
+| Parameter | Dev | Staging | Prod |
+|-----------|-----|---------|------|
+| MSK Instance | kafka.t3.small | kafka.t3.small | kafka.m5.large |
+| MSK Brokers | 2 | 2 | 3 |
+| EMR Max vCPU | 16 | 32 | 64 |
+| Log Retention | 7 days | 14 days | 30 days |
+| Snapshot Retention | 48 hours | 7 days | 30 days |
+| NAT Gateways | 1 (single) | 1 (single) | 3 (per AZ) |
+
+### 6.3 Changing EMR Serverless Configuration
+
+### 6.4 Changing EMR Serverless Configuration
+
+**File:** `infrastructure/terraform/modules/compute/main.tf`
 
 #### 6.2.1 Increase Maximum Capacity (Requires Quota Increase)
 

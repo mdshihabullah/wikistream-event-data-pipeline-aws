@@ -677,46 +677,67 @@ wikistream/
 ├── README.md                          # This file
 ├── docs/
 │   ├── ARCHITECTURE.md                # Detailed architecture documentation
-│   └── architecture_diagram.html      # Interactive HTML diagram
+│   └── RUNBOOK.md                     # Operations runbook
 ├── infrastructure/
 │   └── terraform/
-│       ├── main.tf                    # AWS resources (VPC, MSK, EMR, ECS, Step Functions)
-│       └── variables.tf               # Configuration variables
+│       ├── main.tf                    # Root module orchestration
+│       ├── variables.tf               # All configurable parameters
+│       ├── outputs.tf                 # Outputs for scripts
+│       ├── versions.tf                # Terraform & provider versions
+│       ├── backend.tf                 # S3 backend configuration
+│       ├── providers.tf               # AWS provider config
+│       ├── locals.tf                  # Local values
+│       ├── data.tf                    # Data sources
+│       ├── environments/              # Environment-specific tfvars
+│       │   ├── dev.tfvars             # Development (cost-optimized)
+│       │   ├── staging.tfvars         # Pre-production
+│       │   └── prod.tfvars            # Production (HA)
+│       └── modules/                   # Terraform modules (NEW)
+│           ├── networking/            # VPC, subnets, security groups
+│           ├── storage/               # S3 buckets, S3 Tables
+│           ├── streaming/             # MSK Kafka cluster
+│           ├── compute/               # ECS, EMR, ECR, Lambda
+│           ├── orchestration/         # Step Functions, EventBridge
+│           │   └── templates/         # JSON templates (templatefile)
+│           └── monitoring/            # CloudWatch, SNS, alarms
 ├── producer/
 │   ├── kafka_producer.py              # SSE consumer → Kafka producer
 │   ├── requirements.txt               # Python dependencies
 │   └── Dockerfile                     # Container image for ECS
 ├── spark/
 │   ├── jobs/
-│   │   ├── bronze_streaming_job.py    # Kafka → Bronze (Spark Structured Streaming)
-│   │   ├── silver_batch_job.py        # Bronze → Silver (Spark Batch)
-│   │   ├── gold_batch_job.py          # Silver → Gold (Spark Batch)
-│   │   ├── bronze_dq_gate.py          # Bronze layer DQ gate job
-│   │   ├── silver_dq_gate.py          # Silver layer DQ gate job
-│   │   ├── gold_dq_gate.py            # Gold layer DQ gate job
-│   │   └── dq/                        # DQ module
-│   │       ├── __init__.py
-│   │       ├── dq_checks.py           # Deequ-based DQ check classes
-│   │       └── dq_utils.py            # Audit writer, metrics, alerting
-│   └── schemas/
-│       ├── bronze_schema.py           # Raw event schema
-│       ├── silver_schema.py           # Cleaned event schema
-│       └── gold_schema.py             # Aggregation schemas
+│   │   ├── bronze_streaming_job.py    # Kafka → Bronze (Spark Streaming)
+│   │   ├── silver_batch_job.py        # Bronze → Silver (Batch)
+│   │   ├── gold_batch_job.py          # Silver → Gold (Batch)
+│   │   ├── bronze_dq_gate.py          # Bronze DQ gate
+│   │   ├── silver_dq_gate.py          # Silver DQ gate
+│   │   ├── gold_dq_gate.py            # Gold DQ gate
+│   │   └── dq/                        # DQ module (PyDeequ)
+│   └── schemas/                       # PySpark schemas
 ├── config/
 │   └── settings.py                    # Domain filters, regions, SLAs
 ├── scripts/
 │   ├── setup_terraform_backend.sh     # Setup S3 + DynamoDB for state
-│   ├── create_infra.sh                # Start infrastructure + pipeline (EventBridge Scheduler)
-│   ├── destroy_all.sh                 # Full teardown with verification (13-step)
-│   └── destroy_infra_only.sh          # Stop costly resources (preserves data)
+│   ├── create_infra.sh                # Start infrastructure (supports environments)
+│   ├── destroy_all.sh                 # Full teardown (supports environments)
+│   └── destroy_infra_only.sh          # Stop costly resources
 ├── monitoring/
 │   ├── docker/                        # Dockerized Grafana setup
-│   │   ├── docker-compose.yml
-│   │   └── grafana/provisioning/      # Auto-provisioned datasources
 │   └── grafana/dashboards/            # Pipeline health dashboard
-└── quicksight/                        # QuickSight reference configs (manual setup)
-    ├── datasets/                      # Dataset definitions for Athena connection
-    └── dashboards/                    # Dashboard specifications
+└── quicksight/                        # QuickSight reference configs
+```
+
+### Multi-Environment Support
+
+```bash
+# Development (default)
+./scripts/create_infra.sh
+
+# Staging
+./scripts/create_infra.sh staging
+
+# Production
+./scripts/create_infra.sh prod
 ```
 
 ---

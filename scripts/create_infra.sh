@@ -4,14 +4,17 @@
 # =============================================================================
 # This script creates ALL infrastructure from scratch and can be run repeatedly.
 # It handles:
+#   - Multi-environment support (dev/staging/prod)
 #   - Stopping EMR if running (required for Terraform updates)
 #   - Cancelling existing jobs
 #   - Starting EMR after Terraform
 #   - All edge cases for repeated runs
 #
 # Usage:
-#   ./scripts/create_infra.sh          # Full create
-#   ./scripts/create_infra.sh --force  # Skip confirmations
+#   ./scripts/create_infra.sh              # Create dev environment (default)
+#   ./scripts/create_infra.sh staging      # Create staging environment
+#   ./scripts/create_infra.sh prod         # Create prod environment
+#   ./scripts/create_infra.sh dev --force  # Skip confirmations
 # =============================================================================
 
 set -e
@@ -32,13 +35,48 @@ log_success() { echo -e "${GREEN}✅ $1${NC}"; }
 log_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 log_error() { echo -e "${RED}❌ $1${NC}"; }
 
+# =============================================================================
+# Parse Arguments
+# =============================================================================
+ENVIRONMENT="dev"
+FORCE_FLAG=""
+
+for arg in "$@"; do
+    case $arg in
+        dev|staging|prod)
+            ENVIRONMENT="$arg"
+            ;;
+        --force)
+            FORCE_FLAG="--force"
+            ;;
+        *)
+            log_error "Unknown argument: $arg"
+            echo "Usage: $0 [dev|staging|prod] [--force]"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate environment
+if [[ ! "$ENVIRONMENT" =~ ^(dev|staging|prod)$ ]]; then
+    log_error "Invalid environment: $ENVIRONMENT"
+    echo "Valid environments: dev, staging, prod"
+    exit 1
+fi
+
+# Set name prefix based on environment
+NAME_PREFIX="wikistream-${ENVIRONMENT}"
+
 echo ""
-echo "🟢 CREATING WikiStream Infrastructure"
+echo "🟢 CREATING WikiStream Infrastructure (${ENVIRONMENT})"
 echo "========================================"
+echo ""
+echo "Environment: ${ENVIRONMENT}"
+echo "Name Prefix: ${NAME_PREFIX}"
 echo ""
 echo "This will create:"
 echo "  • VPC with NAT Gateway"
-echo "  • MSK Kafka Cluster (2 brokers)"
+echo "  • MSK Kafka Cluster"
 echo "  • EMR Serverless Application"
 echo "  • ECS Cluster and Producer Service"
 echo "  • S3 Data Bucket"
@@ -52,16 +90,18 @@ echo ""
 AWS_REGION="${AWS_REGION:-us-east-1}"
 AWS_PROFILE="${AWS_PROFILE:-neuefische}"
 
-# Export AWS_PROFILE so Terraform and AWS CLI subprocesses inherit it
+# Export variables for subprocesses
 export AWS_PROFILE
 export AWS_REGION
+export ENVIRONMENT
 
 log_info "Using AWS Profile: ${AWS_PROFILE}"
+log_info "Environment: ${ENVIRONMENT}"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --profile $AWS_PROFILE --query Account --output text)
 
 # Clean up any existing one-time EventBridge schedules from previous runs
 EXISTING_SCHEDULE=$(aws scheduler list-schedules --profile $AWS_PROFILE \
-    --name-prefix "wikistream-initial-batch" \
+    --name-prefix "${NAME_PREFIX}-initial-batch" \
     --query 'Schedules[0].Name' \
     --output text 2>/dev/null || echo "None")
 if [ "$EXISTING_SCHEDULE" != "None" ] && [ -n "$EXISTING_SCHEDULE" ]; then
@@ -70,6 +110,8 @@ if [ "$EXISTING_SCHEDULE" != "None" ] && [ -n "$EXISTING_SCHEDULE" ]; then
 fi
 
 echo "📋 Configuration:"
+echo "   Environment: ${ENVIRONMENT}"
+echo "   Name Prefix: ${NAME_PREFIX}"
 echo "   AWS Account: ${AWS_ACCOUNT_ID}"
 echo "   AWS Region:  ${AWS_REGION}"
 echo "   AWS Profile: ${AWS_PROFILE}"
@@ -154,9 +196,9 @@ echo ""
 # =============================================================================
 echo "🛑 Step 0/7: Preparing EMR Serverless for updates..."
 
-# Find existing EMR app
+# Find existing EMR app for this environment
 EMR_APP_ID=$(aws emr-serverless list-applications --profile $AWS_PROFILE \
-    --query 'applications[?contains(name,`wikistream`)].id' \
+    --query "applications[?contains(name,\`${NAME_PREFIX}\`)].id" \
     --output text 2>/dev/null || echo "")
 
 if [ -n "$EMR_APP_ID" ]; then
@@ -233,11 +275,11 @@ echo ""
 
 cd "${TERRAFORM_DIR}"
 
-# Initialize Terraform with dynamic backend (supports any AWS account)
-log_info "Initializing Terraform with backend: s3://${STATE_BUCKET}"
+# Initialize Terraform with dynamic backend (supports any AWS account and environment)
+log_info "Initializing Terraform with backend: s3://${STATE_BUCKET}/wikistream/${ENVIRONMENT}"
 terraform init -upgrade -input=false -reconfigure \
     -backend-config="bucket=${STATE_BUCKET}" \
-    -backend-config="key=wikistream/terraform.tfstate" \
+    -backend-config="key=wikistream/${ENVIRONMENT}/terraform.tfstate" \
     -backend-config="region=${AWS_REGION}" \
     -backend-config="dynamodb_table=${LOCK_TABLE}" \
     -backend-config="encrypt=true"
@@ -246,9 +288,17 @@ terraform init -upgrade -input=false -reconfigure \
 log_info "Validating configuration..."
 terraform validate
 
-# Apply configuration with profile variable
-log_info "Applying Terraform configuration..."
+# Check if environment tfvars exists
+TFVARS_FILE="${TERRAFORM_DIR}/environments/${ENVIRONMENT}.tfvars"
+if [ ! -f "$TFVARS_FILE" ]; then
+    log_error "Environment file not found: ${TFVARS_FILE}"
+    exit 1
+fi
+
+# Apply configuration with environment-specific tfvars
+log_info "Applying Terraform configuration for ${ENVIRONMENT} environment..."
 terraform apply -auto-approve -input=false \
+    -var-file="environments/${ENVIRONMENT}.tfvars" \
     -var="aws_current_profile=${AWS_PROFILE}" \
     -var="aws_region=${AWS_REGION}"
 
@@ -301,8 +351,9 @@ log_success "Outputs saved to outputs.json"
 echo ""
 echo "🐳 Step 3/7: Checking Docker image..."
 
-# Check if image exists in ECR
-IMAGE_COUNT=$(aws ecr list-images --profile $AWS_PROFILE --repository-name wikistream-dev-producer --query 'length(imageIds)' --output text --no-cli-pager 2>/dev/null || echo "0")
+# Check if image exists in ECR (use dynamic name based on environment)
+ECR_REPO_NAME="${NAME_PREFIX}-producer"
+IMAGE_COUNT=$(aws ecr list-images --profile $AWS_PROFILE --repository-name ${ECR_REPO_NAME} --query 'length(imageIds)' --output text --no-cli-pager 2>/dev/null || echo "0")
 
 if [ "$IMAGE_COUNT" = "0" ] || [ "$IMAGE_COUNT" = "None" ]; then
     log_info "No image found in ECR, building and pushing..."
@@ -384,9 +435,10 @@ echo ""
 echo "🔄 Step 5/7: Starting ECS producer service..."
 
 # Update service to desired count 1 and force new deployment
+ECS_SERVICE_NAME="${NAME_PREFIX}-producer"
 aws ecs update-service --profile $AWS_PROFILE \
     --cluster ${ECS_CLUSTER} \
-    --service wikistream-dev-producer \
+    --service ${ECS_SERVICE_NAME} \
     --desired-count 1 \
     --force-new-deployment \
     --no-cli-pager > /dev/null
@@ -431,7 +483,7 @@ fi
 # Wait for MSK to be fully ready for connections
 log_info "Waiting for MSK cluster to be ready..."
 MSK_CLUSTER_ARN=$(aws kafka list-clusters --profile $AWS_PROFILE \
-    --query 'ClusterInfoList[?contains(ClusterName,`wikistream`)].ClusterArn' \
+    --query "ClusterInfoList[?contains(ClusterName,\`${NAME_PREFIX}\`)].ClusterArn" \
     --output text 2>/dev/null || echo "")
 
 if [ -n "$MSK_CLUSTER_ARN" ]; then
@@ -474,7 +526,7 @@ JOB_RUN_ID=$(aws emr-serverless start-job-run --profile $AWS_PROFILE \
         "monitoringConfiguration": {
             "cloudWatchLoggingConfiguration": {
                 "enabled": true,
-                "logGroupName": "/aws/emr-serverless/wikistream-dev",
+                "logGroupName": "/aws/emr-serverless/'"${NAME_PREFIX}"'",
                 "logStreamNamePrefix": "bronze"
             },
             "s3MonitoringConfiguration": {
@@ -499,10 +551,10 @@ log_info "Pipeline flow: Bronze DQ → Silver → Silver DQ → Gold → Gold DQ
 
 # Calculate schedule time (15 minutes from now in UTC)
 SCHEDULE_TIME=$(date -u -v+15M '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || date -u -d '+15 minutes' '+%Y-%m-%dT%H:%M:%S')
-SCHEDULE_NAME="wikistream-initial-batch-$(date +%s)"
+SCHEDULE_NAME="${NAME_PREFIX}-initial-batch-$(date +%s)"
 
 # Get the EventBridge scheduler role ARN (same as the eventbridge_sfn role)
-SCHEDULER_ROLE_ARN=$(aws iam get-role --profile $AWS_PROFILE --role-name wikistream-dev-eventbridge-sfn-role \
+SCHEDULER_ROLE_ARN=$(aws iam get-role --profile $AWS_PROFILE --role-name ${NAME_PREFIX}-eventbridge-sfn-role \
     --query 'Role.Arn' --output text 2>/dev/null || echo "")
 
 if [ -z "$SCHEDULER_ROLE_ARN" ]; then
@@ -517,9 +569,9 @@ else
         --schedule-expression "at(${SCHEDULE_TIME})" \
         --flexible-time-window '{"Mode": "OFF"}' \
         --target "{
-            \"Arn\": \"arn:aws:states:${AWS_REGION}:${AWS_ACCOUNT_ID}:stateMachine:wikistream-dev-batch-pipeline\",
+            \"Arn\": \"arn:aws:states:${AWS_REGION}:${AWS_ACCOUNT_ID}:stateMachine:${NAME_PREFIX}-batch-pipeline\",
             \"RoleArn\": \"${SCHEDULER_ROLE_ARN}\",
-            \"Input\": \"{\\\"triggered_by\\\": \\\"eventbridge_scheduler\\\", \\\"initial_start\\\": true}\"
+            \"Input\": \"{\\\"triggered_by\\\": \\\"eventbridge_scheduler\\\", \\\"initial_start\\\": true, \\\"environment\\\": \\\"${ENVIRONMENT}\\\"}\"
         }" \
         --action-after-completion "DELETE" \
         --state "ENABLED" \
@@ -560,7 +612,7 @@ echo ""
 echo "🔗 Console Links:"
 echo "   EMR: https://${AWS_REGION}.console.aws.amazon.com/emr/home?region=${AWS_REGION}#/serverless/applications/${EMR_APP_ID}"
 echo "   ECS: https://${AWS_REGION}.console.aws.amazon.com/ecs/v2/clusters/${ECS_CLUSTER}/services"
-echo "   Dashboard: https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#dashboards:name=wikistream-dev-pipeline-dashboard"
+echo "   Dashboard: https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#dashboards:name=${NAME_PREFIX}-pipeline-dashboard"
 echo "   Scheduler: https://${AWS_REGION}.console.aws.amazon.com/scheduler/home?region=${AWS_REGION}#schedules"
 echo ""
 echo "⏱️  Pipeline Timeline:"
@@ -575,11 +627,11 @@ echo "   ↓ SUCCESS: Wait 10min → Self-trigger next cycle"
 echo "   ↓ FAILURE: Stop loop (manual restart required after fix)"
 echo ""
 echo "📊 Manual Control:"
-echo "   • Start:   aws stepfunctions start-execution --state-machine-arn arn:aws:states:${AWS_REGION}:${AWS_ACCOUNT_ID}:stateMachine:wikistream-dev-batch-pipeline"
+echo "   • Start:   aws stepfunctions start-execution --state-machine-arn arn:aws:states:${AWS_REGION}:${AWS_ACCOUNT_ID}:stateMachine:${NAME_PREFIX}-batch-pipeline"
 echo "   • Stop:    Use AWS Console to stop the running execution"
 echo "   • Restart: After fixing issues, run the Start command above"
 echo ""
 echo "✅ You can safely close this terminal - batch pipeline will start"
 echo "   automatically via EventBridge Scheduler (serverless, no local process)"
 echo ""
-echo "🛑 End of day: ./scripts/destroy_all.sh"
+echo "🛑 End of day: ./scripts/destroy_all.sh ${ENVIRONMENT}"

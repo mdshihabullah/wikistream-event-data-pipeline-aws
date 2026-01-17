@@ -1,6 +1,13 @@
 # =============================================================================
 # WikiStream Pipeline - Terraform Variables
 # =============================================================================
+# All configurable parameters for the infrastructure
+# Environment-specific values should be set in environments/*.tfvars
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Core Configuration
+# -----------------------------------------------------------------------------
 
 variable "project_name" {
   description = "Project name used for resource naming"
@@ -25,24 +32,213 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "aws_current_profile" {
+  description = "AWS CLI profile to use"
+  type        = string
+  default     = "neuefische"
+}
+
+# -----------------------------------------------------------------------------
+# Networking Configuration
+# -----------------------------------------------------------------------------
+
 variable "vpc_cidr" {
   description = "CIDR block for VPC"
   type        = string
   default     = "10.0.0.0/16"
 }
 
-variable "aws_current_profile" {
-  description = "AWS current profile"
-  type        = string
-  default     = "neuefische"
+variable "az_count" {
+  description = "Number of availability zones (2 for dev/cost savings, 3 for prod)"
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.az_count >= 2 && var.az_count <= 3
+    error_message = "AZ count must be 2 or 3."
+  }
 }
 
-# =============================================================================
-# Alerting Configuration
-# =============================================================================
+variable "single_nat_gateway" {
+  description = "Use single NAT gateway (cost savings for non-prod)"
+  type        = bool
+  default     = true
+}
+
+# -----------------------------------------------------------------------------
+# MSK (Kafka) Configuration
+# -----------------------------------------------------------------------------
+
+variable "msk_instance_type" {
+  description = "MSK broker instance type"
+  type        = string
+  default     = "kafka.t3.small"
+}
+
+variable "msk_broker_count" {
+  description = "Number of MSK brokers"
+  type        = number
+  default     = 2
+}
+
+variable "msk_storage_size" {
+  description = "EBS storage size per broker (GB)"
+  type        = number
+  default     = 50
+}
+
+variable "kafka_retention_hours" {
+  description = "Kafka log retention in hours"
+  type        = number
+  default     = 168 # 7 days
+}
+
+# -----------------------------------------------------------------------------
+# EMR Serverless Configuration
+# -----------------------------------------------------------------------------
+
+variable "emr_max_vcpu" {
+  description = "Maximum vCPU for EMR Serverless application"
+  type        = string
+  default     = "16 vCPU"
+}
+
+variable "emr_max_memory" {
+  description = "Maximum memory for EMR Serverless application"
+  type        = string
+  default     = "64 GB"
+}
+
+variable "emr_max_disk" {
+  description = "Maximum disk for EMR Serverless application"
+  type        = string
+  default     = "200 GB"
+}
+
+variable "emr_idle_timeout_minutes" {
+  description = "EMR auto-stop idle timeout in minutes"
+  type        = number
+  default     = 15
+}
+
+variable "emr_prewarm_driver_count" {
+  description = "Number of pre-warmed drivers"
+  type        = number
+  default     = 1
+}
+
+variable "emr_prewarm_executor_count" {
+  description = "Number of pre-warmed executors"
+  type        = number
+  default     = 1
+}
+
+# -----------------------------------------------------------------------------
+# ECS Configuration
+# -----------------------------------------------------------------------------
+
+variable "ecs_cpu" {
+  description = "ECS task CPU units (256 = 0.25 vCPU)"
+  type        = string
+  default     = "256"
+}
+
+variable "ecs_memory" {
+  description = "ECS task memory (MB)"
+  type        = string
+  default     = "512"
+}
+
+variable "ecs_container_insights" {
+  description = "Enable ECS Container Insights (cost consideration)"
+  type        = bool
+  default     = false
+}
+
+# -----------------------------------------------------------------------------
+# S3 Tables Configuration
+# -----------------------------------------------------------------------------
+
+variable "iceberg_compaction_target_mb" {
+  description = "Target file size for Iceberg compaction (MB)"
+  type        = number
+  default     = 512
+}
+
+variable "iceberg_snapshot_retention_hours" {
+  description = "Maximum snapshot age in hours"
+  type        = number
+  default     = 48 # 2 days for dev
+}
+
+variable "iceberg_min_snapshots" {
+  description = "Minimum snapshots to keep"
+  type        = number
+  default     = 1
+}
+
+variable "iceberg_unreferenced_days" {
+  description = "Days before cleaning unreferenced files"
+  type        = number
+  default     = 3
+}
+
+# -----------------------------------------------------------------------------
+# Monitoring Configuration
+# -----------------------------------------------------------------------------
 
 variable "alert_email" {
   description = "Email address to receive pipeline alerts and DQ notifications"
   type        = string
   default     = "mrshihabullah@gmail.com"
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch log retention in days"
+  type        = number
+  default     = 7
+}
+
+variable "emr_log_retention_days" {
+  description = "EMR Serverless CloudWatch log retention in days"
+  type        = number
+  default     = 14
+}
+
+# -----------------------------------------------------------------------------
+# Step Functions Configuration
+# -----------------------------------------------------------------------------
+
+variable "step_function_job_timeout" {
+  description = "Timeout for EMR jobs in Step Functions (seconds)"
+  type        = number
+  default     = 900 # 15 minutes
+}
+
+variable "batch_pipeline_wait_seconds" {
+  description = "Wait time between batch pipeline cycles (seconds)"
+  type        = number
+  default     = 600 # 10 minutes
+}
+
+# -----------------------------------------------------------------------------
+# Feature Flags
+# -----------------------------------------------------------------------------
+
+variable "enable_vpc_flow_logs" {
+  description = "Enable VPC flow logs (cost consideration)"
+  type        = bool
+  default     = false
+}
+
+variable "enable_ecr_scan" {
+  description = "Enable ECR image scanning on push"
+  type        = bool
+  default     = false
+}
+
+variable "force_destroy_s3" {
+  description = "Allow Terraform to delete S3 bucket with objects (for dev cleanup)"
+  type        = bool
+  default     = true
 }

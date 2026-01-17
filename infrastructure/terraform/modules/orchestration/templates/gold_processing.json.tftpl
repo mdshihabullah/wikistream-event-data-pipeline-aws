@@ -1,0 +1,90 @@
+{
+  "Comment": "Gold layer batch processing (standalone) - Use batch-pipeline for scheduled runs",
+  "StartAt": "StartGoldJob",
+  "States": {
+    "StartGoldJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_app_id}",
+        "ExecutionRoleArn": "${emr_role_arn}",
+        "Name": "gold-processing",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${data_bucket}/spark/jobs/gold_batch_job.py",
+            "EntryPointArguments": ["1"],
+            "SparkSubmitParameters": "${batch_spark_params}"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${name_prefix}",
+              "LogStreamNamePrefix": "gold"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${data_bucket}/emr-serverless/logs/gold/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.jobResult",
+      "TimeoutSeconds": ${job_timeout},
+      "Next": "RecordSuccessMetrics",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyFailure"
+      }]
+    },
+    "RecordSuccessMetrics": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "GoldProcessingCompleted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Success"
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "WikiStream Gold Processing Failure",
+        "Message.$": "States.Format('PIPELINE_FAILURE | Layer: gold | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordFailureMetrics"
+    },
+    "RecordFailureMetrics": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "GoldProcessingFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "Fail": {
+      "Type": "Fail",
+      "Error": "GoldProcessingFailed",
+      "Cause": "Gold layer batch processing failed"
+    },
+    "Success": {
+      "Type": "Succeed"
+    }
+  }
+}

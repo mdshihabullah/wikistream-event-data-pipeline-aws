@@ -1,0 +1,433 @@
+{
+  "Comment": "Unified batch pipeline with DQ gates: Bronze DQ → Silver → Silver DQ → Gold → Gold DQ",
+  "StartAt": "RecordPipelineStart",
+  "States": {
+    "RecordPipelineStart": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "BatchPipelineStarted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Pipeline", "Value": "batch"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "BronzeDQGate"
+    },
+    "BronzeDQGate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_app_id}",
+        "ExecutionRoleArn": "${emr_role_arn}",
+        "Name": "bronze-dq-gate",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${data_bucket}/spark/jobs/bronze_dq_gate.py",
+            "EntryPointArguments": ["${sns_topic_arn}", "2"],
+            "SparkSubmitParameters": "${dq_spark_params}"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${name_prefix}",
+              "LogStreamNamePrefix": "bronze-dq-gate"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${data_bucket}/emr-serverless/logs/bronze-dq-gate/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.bronzeDQResult",
+      "TimeoutSeconds": ${job_timeout},
+      "Next": "RecordBronzeDQSuccess",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyBronzeDQFailure"
+      }]
+    },
+    "RecordBronzeDQSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "DQGatePassed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "bronze"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "StartSilverJob"
+    },
+    "StartSilverJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_app_id}",
+        "ExecutionRoleArn": "${emr_role_arn}",
+        "Name": "silver-processing",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${data_bucket}/spark/jobs/silver_batch_job.py",
+            "EntryPointArguments": ["1"],
+            "SparkSubmitParameters": "${batch_spark_params}"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${name_prefix}",
+              "LogStreamNamePrefix": "silver"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${data_bucket}/emr-serverless/logs/silver/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.silverResult",
+      "TimeoutSeconds": ${job_timeout},
+      "Next": "RecordSilverSuccess",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifySilverFailure"
+      }]
+    },
+    "RecordSilverSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "SilverProcessingCompleted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "silver"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "SilverDQGate"
+    },
+    "SilverDQGate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_app_id}",
+        "ExecutionRoleArn": "${emr_role_arn}",
+        "Name": "silver-dq-gate",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${data_bucket}/spark/jobs/silver_dq_gate.py",
+            "EntryPointArguments": ["${sns_topic_arn}", "2"],
+            "SparkSubmitParameters": "${dq_spark_params}"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${name_prefix}",
+              "LogStreamNamePrefix": "silver-dq-gate"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${data_bucket}/emr-serverless/logs/silver-dq-gate/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.silverDQResult",
+      "TimeoutSeconds": ${job_timeout},
+      "Next": "RecordSilverDQSuccess",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifySilverDQFailure"
+      }]
+    },
+    "RecordSilverDQSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "DQGatePassed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "silver"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "StartGoldJob"
+    },
+    "StartGoldJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_app_id}",
+        "ExecutionRoleArn": "${emr_role_arn}",
+        "Name": "gold-processing",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${data_bucket}/spark/jobs/gold_batch_job.py",
+            "EntryPointArguments": ["1"],
+            "SparkSubmitParameters": "${batch_spark_params}"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${name_prefix}",
+              "LogStreamNamePrefix": "gold"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${data_bucket}/emr-serverless/logs/gold/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.goldResult",
+      "TimeoutSeconds": ${job_timeout},
+      "Next": "RecordGoldSuccess",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyGoldFailure"
+      }]
+    },
+    "RecordGoldSuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "GoldProcessingCompleted",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "GoldDQGate"
+    },
+    "GoldDQGate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::emr-serverless:startJobRun.sync",
+      "Parameters": {
+        "ApplicationId": "${emr_app_id}",
+        "ExecutionRoleArn": "${emr_role_arn}",
+        "Name": "gold-dq-gate",
+        "JobDriver": {
+          "SparkSubmit": {
+            "EntryPoint": "s3://${data_bucket}/spark/jobs/gold_dq_gate.py",
+            "EntryPointArguments": ["${sns_topic_arn}", "2"],
+            "SparkSubmitParameters": "${dq_spark_params}"
+          }
+        },
+        "ConfigurationOverrides": {
+          "MonitoringConfiguration": {
+            "CloudWatchLoggingConfiguration": {
+              "Enabled": true,
+              "LogGroupName": "/aws/emr-serverless/${name_prefix}",
+              "LogStreamNamePrefix": "gold-dq-gate"
+            },
+            "S3MonitoringConfiguration": {
+              "LogUri": "s3://${data_bucket}/emr-serverless/logs/gold-dq-gate/"
+            }
+          }
+        }
+      },
+      "ResultPath": "$.goldDQResult",
+      "TimeoutSeconds": ${job_timeout},
+      "Next": "RecordPipelineComplete",
+      "Catch": [{
+        "ErrorEquals": ["States.ALL"],
+        "ResultPath": "$.error",
+        "Next": "NotifyGoldDQFailure"
+      }]
+    },
+    "RecordPipelineComplete": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [
+          {
+            "MetricName": "BatchPipelineCompleted",
+            "Value": 1,
+            "Unit": "Count",
+            "Dimensions": [{"Name": "Pipeline", "Value": "batch"}]
+          },
+          {
+            "MetricName": "DQGatePassed",
+            "Value": 1,
+            "Unit": "Count",
+            "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+          }
+        ]
+      },
+      "ResultPath": null,
+      "Next": "WaitBeforeNextCycle"
+    },
+    "WaitBeforeNextCycle": {
+      "Type": "Wait",
+      "Comment": "Wait before starting the next pipeline cycle",
+      "Seconds": ${wait_seconds},
+      "Next": "TriggerNextCycle"
+    },
+    "TriggerNextCycle": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::states:startExecution",
+      "Parameters": {
+        "StateMachineArn": "arn:aws:states:${region}:${account_id}:stateMachine:${name_prefix}-batch-pipeline",
+        "Input": {
+          "triggered_by": "self_loop",
+          "previous_status": "SUCCESS"
+        }
+      },
+      "End": true
+    },
+    "NotifyBronzeDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "WikiStream Bronze DQ Gate FAILED",
+        "Message.$": "States.Format('DQ_GATE_FAILURE | Layer: bronze | Severity: CRITICAL | ExecutionId: {} | Timestamp: {} | Error: {} | Action: Downstream processing blocked', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordBronzeDQFailure"
+    },
+    "RecordBronzeDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "DQGateFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "bronze"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "NotifySilverFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "WikiStream Silver Processing Failure",
+        "Message.$": "States.Format('PIPELINE_FAILURE | Layer: silver | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordSilverFailure"
+    },
+    "RecordSilverFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "SilverProcessingFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "silver"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "NotifySilverDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "WikiStream Silver DQ Gate FAILED",
+        "Message.$": "States.Format('DQ_GATE_FAILURE | Layer: silver | Severity: CRITICAL | ExecutionId: {} | Timestamp: {} | Error: {} | Action: Gold processing blocked', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordSilverDQFailure"
+    },
+    "RecordSilverDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "DQGateFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "silver"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "NotifyGoldFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "WikiStream Gold Processing Failure",
+        "Message.$": "States.Format('PIPELINE_FAILURE | Layer: gold | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {}', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordGoldFailure"
+    },
+    "RecordGoldFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/Pipeline",
+        "MetricData": [{
+          "MetricName": "GoldProcessingFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "NotifyGoldDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_topic_arn}",
+        "Subject": "WikiStream Gold DQ Gate FAILED",
+        "Message.$": "States.Format('DQ_GATE_FAILURE | Layer: gold | Severity: HIGH | ExecutionId: {} | Timestamp: {} | Error: {} | Note: Data processed but quality checks failed', $$.Execution.Id, $$.State.EnteredTime, $.error.Cause)"
+      },
+      "Next": "RecordGoldDQFailure"
+    },
+    "RecordGoldDQFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:cloudwatch:putMetricData",
+      "Parameters": {
+        "Namespace": "WikiStream/DataQuality",
+        "MetricData": [{
+          "MetricName": "DQGateFailed",
+          "Value": 1,
+          "Unit": "Count",
+          "Dimensions": [{"Name": "Layer", "Value": "gold"}]
+        }]
+      },
+      "ResultPath": null,
+      "Next": "Fail"
+    },
+    "Fail": {
+      "Type": "Fail",
+      "Comment": "Pipeline failed - loop stops, manual restart required after investigation",
+      "Error": "BatchPipelineFailed",
+      "Cause": "DQ gate or batch job failed. Check CloudWatch logs, fix the issue, then manually restart the pipeline."
+    }
+  }
+}
