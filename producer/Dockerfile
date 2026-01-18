@@ -1,53 +1,52 @@
 # =============================================================================
-# WikiStream Kafka Producer - Docker Image
+# WikiStream Kafka Producer - Secure Docker Image
 # =============================================================================
-# Multi-stage build for minimal image size
+# Chainguard-based multi-stage build for maximum security:
+#   - Near-zero CVE attack surface (daily patched images)
+#   - No shell/package manager in runtime (reduced attack vectors)
+#   - Non-root by default (UID 65532)
+#   - SBOM, Sigstore signatures, SLSA Level 3 compliance
+#   - Wolfi glibc 2.42+ compatible with manylinux wheels
+#
 # Runs on ECS Fargate with IAM task role for MSK authentication
 # =============================================================================
 
-# Build stage
-FROM python:3.11-slim AS builder
+# Build stage - uses dev variant with pip/shell for dependency installation
+FROM cgr.dev/chainguard/python:latest-dev AS builder
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Create virtual environment (Chainguard best practice)
+RUN python -m venv /app/venv
 
-# Install Python dependencies
+# Activate venv for subsequent commands
+ENV PATH="/app/venv/bin:$PATH"
+
+# Install Python dependencies into venv
+# confluent-kafka manylinux_2_28 wheel works with Wolfi's glibc 2.42
 COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Runtime stage
-FROM python:3.11-slim
-
-# Security: Run as non-root user
-RUN groupadd -r wikistream && useradd -r -g wikistream wikistream
+# Runtime stage - minimal distroless image (no shell, no package manager)
+FROM cgr.dev/chainguard/python:latest
 
 WORKDIR /app
 
-# Copy Python packages from builder
-COPY --from=builder /root/.local /home/wikistream/.local
+# Copy virtual environment from builder
+COPY --from=builder /app/venv /app/venv
 
 # Copy application code
 COPY kafka_producer.py .
 
-# Set ownership
-RUN chown -R wikistream:wikistream /app
+# Set PATH to use venv Python and packages
+ENV PATH="/app/venv/bin:$PATH"
 
-# Switch to non-root user
-USER wikistream
-
-# Add local packages to PATH
-ENV PATH=/home/wikistream/.local/bin:$PATH
+# Python optimization flags
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Health check (ECS uses this)
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD pgrep -f kafka_producer.py || exit 1
+# Note: No HEALTHCHECK - Chainguard minimal has no shell
+# ECS monitors task health via running state and CloudWatch logs
 
-# Run producer
-CMD ["python", "kafka_producer.py"]
+# Run producer (uses venv's python implicitly via PATH)
+ENTRYPOINT ["python", "kafka_producer.py"]

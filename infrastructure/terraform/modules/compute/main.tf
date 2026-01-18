@@ -92,13 +92,9 @@ resource "aws_ecs_task_definition" "producer" {
       }
     }
 
-    healthCheck = {
-      command     = ["CMD-SHELL", "pgrep -f kafka_producer.py || exit 1"]
-      interval    = 30
-      timeout     = 5
-      retries     = 3
-      startPeriod = 60
-    }
+    # Note: healthCheck removed - Chainguard minimal image has no shell
+    # ECS monitors container health via task running state
+    # Application health is monitored via CloudWatch logs and metrics
   }])
 
   tags = var.tags
