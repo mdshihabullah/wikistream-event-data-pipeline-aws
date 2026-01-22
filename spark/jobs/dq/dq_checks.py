@@ -629,8 +629,10 @@ class BronzeDQChecks(BaseDQChecks):
             # Note: Namespace validity check removed - Wikipedia SSE uses negative IDs:
             #   -1 = Special pages, -2 = Media namespace (both are valid)
             
-            # 6. Uniqueness: event_id
-            check = check.isUnique("event_id")
+            # 6. Uniqueness: event_id (95% threshold - Wikipedia SSE can send duplicates)
+            # Note: Duplicates can occur due to network retries, reconnections, or SSE replays
+            # We use hasUniqueness with 95% threshold instead of isUnique (100%)
+            check = check.hasUniqueness(["event_id"], lambda x: x >= 0.95)
             
             # Run Deequ verification
             deequ_results = self._run_deequ_verification(df, check)

@@ -10,7 +10,15 @@ Features:
 - Watermarking for late/out-of-order events  
 - Schema evolution support via mergeSchema
 - Idempotent MERGE with deterministic event_id
+- Stateful deduplication across micro-batches (handles SSE reconnections)
 - DLQ integration for malformed records
+
+Note on Duplicates:
+Wikipedia SSE stream can send duplicate events due to:
+- Network retries and reconnections
+- SSE client reconnection after failures
+- EventStreams service replays during recovery
+We handle this with dropDuplicatesWithinWatermark() for stateful deduplication.
 """
 
 import sys
@@ -224,8 +232,9 @@ def transform_to_bronze(df):
         )
         # Filter out completely invalid records (no event_id means malformed)
         .filter(col("event_id").isNotNull())
-        # Drop duplicates within the micro-batch (handles Kafka replays)
-        .dropDuplicates(["event_id"])
+        # Stateful deduplication: drop duplicates within watermark window (10 minutes)
+        # This handles duplicates across micro-batches from SSE reconnections/retries
+        .dropDuplicatesWithinWatermark(["event_id"])
     )
 
 
