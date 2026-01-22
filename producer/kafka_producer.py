@@ -17,6 +17,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
+import boto3
 import sseclient
 import requests
 from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
@@ -229,6 +230,14 @@ class WikiStreamProducer:
             "events_dlq": 0,
             "errors": 0,
         }
+        # Track last published values for delta calculations
+        self.last_published_stats = {
+            "events_received": 0,
+            "events_processed": 0,
+            "events_filtered": 0,
+            "events_dlq": 0,
+            "errors": 0,
+        }
         self.last_stats_log = time.time()
         
         # Signal handlers for graceful shutdown
@@ -241,7 +250,7 @@ class WikiStreamProducer:
         self.running = False
     
     def _log_stats(self):
-        """Log processing statistics periodically."""
+        """Log processing statistics periodically and publish to CloudWatch."""
         now = time.time()
         if now - self.last_stats_log >= 60:  # Every minute
             logger.info(
@@ -251,7 +260,61 @@ class WikiStreamProducer:
                 f"dlq={self.stats['events_dlq']}, "
                 f"errors={self.stats['errors']}"
             )
+            
+            # Publish metrics to CloudWatch
+            self._publish_cloudwatch_metrics()
+            
             self.last_stats_log = now
+    
+    def _publish_cloudwatch_metrics(self):
+        """Publish producer metrics to CloudWatch for monitoring.
+        
+        Publishes incremental (delta) values since last publish to enable
+        per-minute rate calculations with CloudWatch Sum statistic.
+        """
+        try:
+            cloudwatch = boto3.client('cloudwatch', region_name=AWS_REGION)
+            
+            # Calculate deltas since last publish (for per-minute rates)
+            metrics = [
+                {
+                    'MetricName': 'EventsReceived',
+                    'Value': self.stats['events_received'] - self.last_published_stats['events_received'],
+                    'Unit': 'Count'
+                },
+                {
+                    'MetricName': 'EventsProcessed',
+                    'Value': self.stats['events_processed'] - self.last_published_stats['events_processed'],
+                    'Unit': 'Count'
+                },
+                {
+                    'MetricName': 'EventsFiltered',
+                    'Value': self.stats['events_filtered'] - self.last_published_stats['events_filtered'],
+                    'Unit': 'Count'
+                },
+                {
+                    'MetricName': 'DLQMessagesProduced',
+                    'Value': self.stats['events_dlq'] - self.last_published_stats['events_dlq'],
+                    'Unit': 'Count'
+                },
+                {
+                    'MetricName': 'ValidationErrors',
+                    'Value': self.stats['errors'] - self.last_published_stats['errors'],
+                    'Unit': 'Count'
+                }
+            ]
+            
+            cloudwatch.put_metric_data(
+                Namespace='WikiStream/Producer',
+                MetricData=metrics
+            )
+            
+            # Update last published values
+            self.last_published_stats = self.stats.copy()
+            
+            logger.debug("Published incremental metrics to CloudWatch")
+        except Exception as e:
+            logger.warning(f"Failed to publish CloudWatch metrics: {e}")
     
     def _delivery_callback(self, err, msg):
         """Callback for producer delivery reports."""
