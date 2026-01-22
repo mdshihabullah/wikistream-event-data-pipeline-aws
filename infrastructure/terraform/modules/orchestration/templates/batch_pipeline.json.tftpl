@@ -45,7 +45,6 @@
         }
       },
       "ResultPath": "$.bronzeDQResult",
-      "TimeoutSeconds": ${job_timeout},
       "Next": "RecordBronzeDQSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -96,7 +95,6 @@
         }
       },
       "ResultPath": "$.silverResult",
-      "TimeoutSeconds": ${job_timeout},
       "Next": "RecordSilverSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -147,7 +145,6 @@
         }
       },
       "ResultPath": "$.silverDQResult",
-      "TimeoutSeconds": ${job_timeout},
       "Next": "RecordSilverDQSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -198,7 +195,6 @@
         }
       },
       "ResultPath": "$.goldResult",
-      "TimeoutSeconds": ${job_timeout},
       "Next": "RecordGoldSuccess",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
@@ -249,7 +245,6 @@
         }
       },
       "ResultPath": "$.goldDQResult",
-      "TimeoutSeconds": ${job_timeout},
       "Next": "RecordPipelineComplete",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
