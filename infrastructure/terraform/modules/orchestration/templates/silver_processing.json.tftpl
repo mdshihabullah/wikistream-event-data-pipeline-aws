@@ -30,7 +30,6 @@
         }
       },
       "ResultPath": "$.jobResult",
-      "TimeoutSeconds": ${job_timeout},
       "Next": "RecordSuccessMetrics",
       "Catch": [{
         "ErrorEquals": ["States.ALL"],
