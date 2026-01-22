@@ -18,6 +18,7 @@ Resource allocation: 2 vCPU driver + 2 vCPU executor = 4 vCPU total
 
 import os
 import sys
+import atexit
 from datetime import datetime, timedelta
 
 # ============================================================================
@@ -28,6 +29,23 @@ if "SPARK_VERSION" not in os.environ:
     os.environ["SPARK_VERSION"] = "3.5"
 
 from pyspark.sql import SparkSession
+
+# Global spark session for cleanup
+spark = None
+
+def cleanup_spark():
+    """Ensure Spark session is stopped on exit."""
+    global spark
+    if spark is not None:
+        try:
+            print("\n[CLEANUP] Stopping Spark session...")
+            spark.stop()
+            print("[CLEANUP] Spark session stopped")
+        except Exception as e:
+            print(f"[CLEANUP] Error stopping Spark: {e}")
+
+# Register cleanup function to run on exit
+atexit.register(cleanup_spark)
 
 # Import DQ modules
 from dq.dq_checks import BronzeDQChecks
@@ -72,6 +90,8 @@ def create_spark_session() -> SparkSession:
 
 def main():
     """Main entry point for Bronze DQ gate job."""
+    global spark
+    
     print("=" * 60)
     print("WikiStream Bronze DQ Gate")
     print(f"Started at: {datetime.utcnow().isoformat()}")
@@ -123,7 +143,8 @@ def main():
             print("⚠️  No Bronze data to check - skipping DQ gate")
             # Still write a result indicating no data
             spark.stop()
-            sys.exit(0)  # Exit success - no data is not a failure
+            # Force JVM shutdown to signal EMR Serverless completion
+            spark.sparkContext._gateway.jvm.System.exit(0)
         
         # Run DQ checks
         print("\n" + "=" * 50)
@@ -195,21 +216,33 @@ def main():
         print(f"Gate Status: {'PASSED' if gate_result.passed else 'FAILED'}")
         print("=" * 60)
         
+        # Stop Spark session cleanly
         spark.stop()
+        print("[CLEANUP] Spark session stopped, forcing JVM shutdown...")
         
+        # Flush output streams before JVM exit
+        sys.stdout.flush()
+        sys.stderr.flush()
+
         # Exit with appropriate code
-        if gate_result.passed:
-            sys.exit(0)
-        else:
-            print("\n🚨 Bronze DQ gate FAILED - blocking downstream processing")
-            sys.exit(1)
-            
+        exit_code = 0 if gate_result.passed else 1
+        print(f"\n🏁 Bronze DQ Gate exiting with code: {exit_code}")
+        # Force JVM shutdown to signal EMR Serverless job completion
+        spark.sparkContext._gateway.jvm.System.exit(exit_code)
+
     except Exception as e:
         print(f"\n❌ Error running Bronze DQ gate: {e}")
         import traceback
         traceback.print_exc()
-        spark.stop()
-        sys.exit(1)
+        # Ensure Spark is stopped even on error
+        try:
+            spark.stop()
+        except Exception as spark_error:
+            print(f"Warning: Error stopping Spark: {spark_error}")
+        # Force JVM shutdown on error
+        sys.stdout.flush()
+        sys.stderr.flush()
+        spark.sparkContext._gateway.jvm.System.exit(1)
 
 
 if __name__ == "__main__":
