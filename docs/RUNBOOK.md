@@ -86,6 +86,7 @@ cd ../..
 | **Start EMR App** | `aws emr-serverless start-application --application-id $EMR_APP_ID` |
 | **Stop EMR App** | `aws emr-serverless stop-application --application-id $EMR_APP_ID` |
 | **View App State** | `aws emr-serverless get-application --application-id $EMR_APP_ID --query 'application.state'` |
+| **Verify Resource Usage** | `./scripts/verify_emr_resources.sh` |
 
 ### 1.5 Step Functions Commands
 
@@ -1568,6 +1569,304 @@ aws service-quotas list-service-quotas --service-code <SERVICE_CODE>
 # - states (Step Functions)
 # - lambda
 # - ecs
+```
+
+### 11.5 EMR Resource Management & Optimization
+
+#### 11.5.1 Understanding Resource Allocation
+
+With a 16 vCPU quota, resource allocation strategy is critical:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Component              │ vCPU  │ State                  │
+├─────────────────────────────────────────────────────────┤
+│ Pre-warming           │  4    │ Always allocated       │
+│ Bronze Streaming      │  3    │ Always running         │
+│ Batch Job (1 at time) │  5    │ Sequential execution   │
+├─────────────────────────────────────────────────────────┤
+│ Peak Usage            │ 12    │ Bronze + Batch         │
+│ Available Buffer      │  4    │ Safety margin          │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Key Insight**: Batch jobs are **sequential** (not concurrent):
+- Only 1 batch job runs at a time
+- Bronze DQ → waits → Silver → waits → Silver DQ → etc.
+- Maximum: 3 (bronze) + 4 (pre-warm) + 5 (1 batch job) = **12 vCPU**
+
+#### 11.5.2 Verify Current Resource Usage
+
+```bash
+# Run the resource verification script
+./scripts/verify_emr_resources.sh
+
+# Expected output:
+# ✅ Pre-warming: 4 vCPU
+# ✅ Bronze streaming: 3 vCPU
+# ✅ Available capacity: 4+ vCPU
+# ✅ No capacity errors
+```
+
+**Manual verification:**
+
+```bash
+# Check pre-warming configuration
+aws emr-serverless get-application \
+    --application-id $EMR_APP_ID \
+    --query 'application.initialCapacity' \
+    --output json
+
+# Check maximum capacity
+aws emr-serverless get-application \
+    --application-id $EMR_APP_ID \
+    --query 'application.maximumCapacity'
+
+# List running jobs
+aws emr-serverless list-job-runs \
+    --application-id $EMR_APP_ID \
+    --states RUNNING PENDING SUBMITTED
+
+# Check for recent capacity errors
+aws logs filter-log-events \
+    --log-group-name /aws/emr-serverless/wikistream-dev \
+    --filter-pattern "ApplicationMaxCapacityExceededException" \
+    --start-time $(($(date +%s) - 3600))000
+```
+
+#### 11.5.3 Common Resource Issues & Solutions
+
+**Problem: `ApplicationMaxCapacityExceededException`**
+
+Error: `Worker could not be allocated as the application has exceeded maximumCapacity settings: [cpu: 16 vCPU]`
+
+**Diagnosis:**
+```bash
+# Calculate current usage
+# Pre-warming: Check initialCapacity
+# Running jobs: List job-runs with RUNNING state
+# Total must be ≤ 16 vCPU
+```
+
+**Solution Options:**
+
+**Option A: Reduce Pre-warming** (Recommended for 16 vCPU quota)
+
+File: `infrastructure/terraform/environments/dev.tfvars`
+```hcl
+# Minimal pre-warming (4 vCPU total)
+emr_prewarm_driver_count   = 1  # 2 vCPU
+emr_prewarm_executor_count = 1  # 2 vCPU
+
+# More capacity available
+# Result: 4 pre-warm + 3 bronze + 5 batch = 12 vCPU (4 vCPU buffer)
+```
+
+**Option B: Remove Pre-warming Entirely** (Slower startup)
+```hcl
+# No pre-warming (cold start: +10-15 seconds)
+emr_prewarm_driver_count   = 0
+emr_prewarm_executor_count = 0
+
+# Maximum capacity available
+# Result: 3 bronze + 5 batch = 8 vCPU (8 vCPU buffer)
+```
+
+**Option C: Reduce Batch Job Resources** (Slower processing)
+
+File: `infrastructure/terraform/modules/orchestration/main.tf`
+```hcl
+# Use only 1 executor per batch job
+base_spark_params = "--conf spark.executor.instances=1 ..."
+
+# Each batch job: 3 vCPU (1 driver + 1 executor)
+# Result: 4 pre-warm + 3 bronze + 3 batch = 10 vCPU (6 vCPU buffer)
+```
+
+**Apply changes:**
+```bash
+cd infrastructure/terraform
+terraform apply -var-file=environments/dev.tfvars
+
+# Verify changes
+../scripts/verify_emr_resources.sh
+```
+
+#### 11.5.4 Optimized Configuration for 16 vCPU Quota
+
+**Current Optimized Settings** (infrastructure/terraform/environments/dev.tfvars):
+
+```hcl
+# EMR Serverless Configuration
+emr_max_vcpu               = "16 vCPU"    # Total quota
+emr_max_memory             = "64 GB"       # 4 GB per vCPU
+emr_max_disk               = "200 GB"      # Storage
+emr_idle_timeout_minutes   = 15            # Auto-stop
+emr_prewarm_driver_count   = 1             # 2 vCPU (fast startup)
+emr_prewarm_executor_count = 1             # 2 vCPU (ready capacity)
+```
+
+**Batch Job Configuration** (infrastructure/terraform/modules/orchestration/main.tf):
+
+```hcl
+# Each batch job: 5 vCPU (1 driver + 2 executors)
+base_spark_params = "--conf spark.driver.cores=1 \
+  --conf spark.driver.memory=2g \
+  --conf spark.executor.cores=2 \
+  --conf spark.executor.memory=4g \
+  --conf spark.executor.instances=2 \
+  --conf spark.dynamicAllocation.enabled=false"
+```
+
+**Bronze Streaming Configuration** (scripts/create_infra.sh):
+
+```bash
+# Bronze streaming: 3 vCPU (1 driver + 1 executor)
+spark.driver.cores=1
+spark.driver.memory=2g
+spark.executor.cores=2
+spark.executor.memory=4g
+spark.executor.instances=1
+```
+
+#### 11.5.5 Resource Monitoring
+
+**Real-time monitoring:**
+
+```bash
+# Watch resource usage every 30 seconds
+watch -n 30 './scripts/verify_emr_resources.sh'
+
+# Get EMR Serverless metrics
+aws cloudwatch get-metric-statistics \
+    --namespace AWS/EMRServerless \
+    --metric-name WorkerCPU \
+    --dimensions Name=ApplicationId,Value=$EMR_APP_ID \
+    --start-time $(date -u -v-1H +%Y-%m-%dT%H:%M:%S) \
+    --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+    --period 300 \
+    --statistics Average Maximum
+
+# Check job queue depth (pending jobs indicate resource shortage)
+aws emr-serverless list-job-runs \
+    --application-id $EMR_APP_ID \
+    --states PENDING SUBMITTED \
+    --max-results 10
+```
+
+**Set up capacity alerts:**
+
+```bash
+# Alert when available capacity is low
+aws cloudwatch put-metric-alarm \
+    --alarm-name "emr-capacity-warning" \
+    --alarm-description "EMR approaching capacity limit" \
+    --metric-name WorkerCPU \
+    --namespace AWS/EMRServerless \
+    --statistic Average \
+    --period 300 \
+    --threshold 12 \
+    --comparison-operator GreaterThanThreshold \
+    --evaluation-periods 2 \
+    --alarm-actions $SNS_TOPIC
+```
+
+#### 11.5.6 Scaling Strategy for Higher Quotas
+
+If you request a quota increase (e.g., 32 vCPU):
+
+**Recommended Configuration for 32 vCPU:**
+
+```hcl
+# More aggressive pre-warming
+emr_prewarm_driver_count   = 2  # 4 vCPU
+emr_prewarm_executor_count = 4  # 8 vCPU
+
+# Larger batch jobs (faster processing)
+spark.executor.instances=4  # 1 driver + 4 executors = 9 vCPU
+
+# Resource breakdown:
+# Pre-warm: 12 vCPU
+# Bronze: 3 vCPU
+# Batch: 9 vCPU
+# Total: 24 vCPU (8 vCPU buffer)
+```
+
+**Recommended Configuration for 64+ vCPU:**
+
+```hcl
+# Enable dynamic allocation
+spark.dynamicAllocation.enabled=true
+spark.dynamicAllocation.minExecutors=2
+spark.dynamicAllocation.maxExecutors=8
+
+# Let Spark automatically scale executors based on workload
+```
+
+#### 11.5.7 Cost Optimization vs Performance
+
+**Trade-off Matrix:**
+
+| Configuration | Startup Time | Processing Speed | Cost/Month | Use Case |
+|---------------|--------------|------------------|------------|----------|
+| No pre-warming | +10-15s | Normal | ~$150 | Cost-sensitive dev |
+| Minimal (1+1) | +5-10s | Normal | ~$200 | Balanced (current) |
+| Aggressive (2+4) | <5s | Fast | ~$350 | Production/Demo |
+| Dynamic | Variable | Optimized | ~$180 | Variable workload |
+
+**Current monthly cost estimate (24/7 operation):**
+```
+Pre-warming:      $0.052/hour × 4 vCPU × 730 hours = ~$152/month
+Bronze streaming: $0.052/hour × 3 vCPU × 730 hours = ~$114/month
+Batch jobs:       $0.052/hour × 5 vCPU × 20 min/cycle = ~$0.09/cycle
+Total:            ~$300-400/month
+```
+
+**Cost reduction strategies:**
+1. Remove pre-warming: Save $150/month (add 10-15s startup)
+2. Weekend shutdown: Save 70% (~$210/month)
+3. Reduce batch job executors: Save $50/month (slower processing)
+
+#### 11.5.8 Troubleshooting Resource Issues
+
+**Jobs stuck in PENDING state:**
+
+```bash
+# Check if waiting for capacity
+aws emr-serverless get-job-run \
+    --application-id $EMR_APP_ID \
+    --job-run-id <JOB_ID> \
+    --query 'jobRun.stateDetails'
+
+# If "Waiting for resources":
+# 1. Cancel non-critical jobs
+# 2. Reduce pre-warming
+# 3. Wait for running jobs to complete
+```
+
+**Bronze streaming consuming too much capacity:**
+
+```bash
+# Check bronze job configuration
+aws emr-serverless get-job-run \
+    --application-id $EMR_APP_ID \
+    --job-run-id <BRONZE_JOB_ID> \
+    --query 'jobRun.configurationOverrides'
+
+# Verify it's using only 1 executor (3 vCPU total)
+# If higher, check scripts/create_infra.sh spark parameters
+```
+
+**Batch pipeline timing out:**
+
+```bash
+# Check if jobs are waiting for executors
+aws logs filter-log-events \
+    --log-group-name /aws/emr-serverless/wikistream-dev \
+    --filter-pattern "no executor being launched" \
+    --start-time $(($(date +%s) - 3600))000
+
+# Solution: Reduce resource allocation to free up capacity
 ```
 
 ---

@@ -75,6 +75,14 @@ log_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 log_error() { echo -e "${RED}❌ $1${NC}"; }
 log_step() { echo -e "\n${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; echo -e "${YELLOW}$1${NC}"; echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"; }
 
+# Cleanup function for temporary files
+cleanup_temp_files() {
+    rm -f /tmp/wikistream-delete-*.json 2>/dev/null || true
+}
+
+# Set trap to cleanup on exit
+trap cleanup_temp_files EXIT INT TERM
+
 # =============================================================================
 # CONFIRMATION
 # =============================================================================
@@ -99,9 +107,12 @@ echo "This action is IRREVERSIBLE!"
 echo ""
 
 if [ -z "$FORCE_FLAG" ]; then
-    read -p "Type 'DELETE ${ENVIRONMENT^^}' to confirm: " confirm
-    if [ "$confirm" != "DELETE ${ENVIRONMENT^^}" ]; then
-        log_error "Cancelled. You must type 'DELETE ${ENVIRONMENT^^}' exactly."
+    # Convert environment to uppercase for confirmation
+    ENV_UPPER=$(echo "${ENVIRONMENT}" | tr '[:lower:]' '[:upper:]')
+    echo -n "Type 'DELETE ${ENV_UPPER}' to confirm: "
+    read confirm
+    if [ "$confirm" != "DELETE ${ENV_UPPER}" ]; then
+        log_error "Cancelled. You must type 'DELETE ${ENV_UPPER}' exactly."
         echo ""
         echo "Tip: Use --force flag to skip confirmation:"
         echo "  ./scripts/destroy_all.sh ${ENVIRONMENT} --force"
@@ -310,7 +321,7 @@ log_step "STEP 6: Running Terraform Destroy"
 cd "$PROJECT_ROOT/infrastructure/terraform"
 
 # Check if backend bucket exists (indicates Terraform state may exist)
-BACKEND_EXISTS=$(aws s3api head-bucket --bucket "${STATE_BUCKET}" --profile $AWS_PROFILE --no-cli-pager 2>&1 && echo "yes" || echo "no")
+BACKEND_EXISTS=$(aws s3api head-bucket --bucket "${STATE_BUCKET}" --profile $AWS_PROFILE --no-cli-pager 2>/dev/null && echo "yes" || echo "no")
 
 if [ "$BACKEND_EXISTS" == "yes" ] || [ -d ".terraform" ]; then
     log_info "Initializing Terraform with backend: s3://${STATE_BUCKET}"
@@ -335,10 +346,14 @@ if [ "$BACKEND_EXISTS" == "yes" ] || [ -d ".terraform" ]; then
         else
             TFVARS_ARG=""
         fi
-        if terraform destroy -auto-approve -input=false \
+        
+        # Run terraform destroy (output to terminal, not piped)
+        terraform destroy -auto-approve -input=false \
             ${TFVARS_ARG} \
             -var="aws_current_profile=${AWS_PROFILE}" \
-            -var="aws_region=${AWS_REGION}" 2>&1; then
+            -var="aws_region=${AWS_REGION}"
+        
+        if [ $? -eq 0 ]; then
             log_success "Terraform destroy completed"
             DELETION_STATUS["terraform"]="done"
         else
@@ -418,8 +433,8 @@ DATA_BUCKET="${NAME_PREFIX}-data-${AWS_ACCOUNT_ID}"
 if aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --no-cli-pager 2>/dev/null; then
     log_info "Emptying bucket: $DATA_BUCKET"
     
-    # Fast delete all current objects
-    aws s3 rm "s3://${DATA_BUCKET}" --profile $AWS_PROFILE --recursive --quiet 2>/dev/null || true
+    # Fast delete all current objects (with timeout protection)
+    timeout 300 aws s3 rm "s3://${DATA_BUCKET}" --profile $AWS_PROFILE --recursive --quiet 2>/dev/null || true
     
     # Batch delete all versions (much faster than one-by-one)
     log_info "Deleting object versions (batch mode)..."
@@ -433,8 +448,11 @@ if aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --no-cli
         OBJECT_COUNT=$(echo "$VERSIONS" | jq '.Objects | length' 2>/dev/null || echo "0")
         [ "$OBJECT_COUNT" == "0" ] || [ "$OBJECT_COUNT" == "null" ] && break
         
-        # Batch delete
-        echo "$VERSIONS" | aws s3api delete-objects --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --delete file:///dev/stdin 2>/dev/null || true
+        # Batch delete using temporary file to avoid stdin hanging
+        TEMP_FILE=$(mktemp /tmp/wikistream-delete-XXXXXX.json)
+        echo "$VERSIONS" > "$TEMP_FILE"
+        aws s3api delete-objects --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --delete "file://${TEMP_FILE}" --no-cli-pager 2>/dev/null || true
+        rm -f "$TEMP_FILE"
         echo -n "."
     done
     echo ""
@@ -448,7 +466,11 @@ if aws s3api head-bucket --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --no-cli
         MARKER_COUNT=$(echo "$MARKERS" | jq '.Objects | length' 2>/dev/null || echo "0")
         [ "$MARKER_COUNT" == "0" ] || [ "$MARKER_COUNT" == "null" ] && break
         
-        echo "$MARKERS" | aws s3api delete-objects --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --delete file:///dev/stdin 2>/dev/null || true
+        # Batch delete using temporary file to avoid stdin hanging
+        TEMP_FILE=$(mktemp /tmp/wikistream-delete-XXXXXX.json)
+        echo "$MARKERS" > "$TEMP_FILE"
+        aws s3api delete-objects --profile $AWS_PROFILE --bucket "$DATA_BUCKET" --delete "file://${TEMP_FILE}" --no-cli-pager 2>/dev/null || true
+        rm -f "$TEMP_FILE"
         echo -n "."
     done
     echo ""
@@ -471,8 +493,10 @@ fi
 # =============================================================================
 log_step "STEP 9: Deleting ECR Repository"
 
-if aws ecr describe-repositories --profile $AWS_PROFILE --repository-names "wikistream-dev-producer" &>/dev/null; then
-    if aws ecr delete-repository --profile $AWS_PROFILE --repository-name "wikistream-dev-producer" --force 2>/dev/null; then
+# Use environment-specific name
+ECR_REPO_NAME="${NAME_PREFIX}-producer"
+if aws ecr describe-repositories --profile $AWS_PROFILE --repository-names "$ECR_REPO_NAME" --no-cli-pager &>/dev/null; then
+    if aws ecr delete-repository --profile $AWS_PROFILE --repository-name "$ECR_REPO_NAME" --force --no-cli-pager 2>/dev/null; then
         log_success "ECR repository deleted"
         DELETION_STATUS["ecr"]="done"
     else

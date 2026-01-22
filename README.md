@@ -551,11 +551,11 @@ For development, use the provided scripts to destroy/recreate costly infrastruct
 
 ```bash
 # End of day - full teardown with verification (idempotent, safe to run multiple times)
-./scripts/destroy_all.sh
+AWS_PROFILE=YOUR_AWS_PROFILE AWS_REGION=YOUR_AWS_REGION ./scripts/destroy_all.sh
 
 # Start of day - recreates infrastructure (~25-35 min)
 # Safe to close terminal after completion - uses EventBridge Scheduler
-./scripts/create_infra.sh
+AWS_PROFILE=YOUR_AWS_PROFILE AWS_REGION=YOUR_AWS_REGION ./scripts/create_infra.sh
 ```
 
 **destroy_all.sh features:**
