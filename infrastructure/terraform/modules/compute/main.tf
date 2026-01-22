@@ -156,28 +156,34 @@ resource "aws_emrserverless_application" "spark" {
     security_group_ids = [var.emr_security_group_id]
   }
 
-  # Pre-warm driver for faster job startup
-  initial_capacity {
-    initial_capacity_type = "DRIVER"
-    initial_capacity_config {
-      worker_count = var.emr_prewarm_driver_count
-      worker_configuration {
-        cpu    = "2 vCPU"
-        memory = "4 GB"
-        disk   = "20 GB"
+  # Pre-warm driver (only if count > 0)
+  dynamic "initial_capacity" {
+    for_each = var.emr_prewarm_driver_count > 0 ? [1] : []
+    content {
+      initial_capacity_type = "DRIVER"
+      initial_capacity_config {
+        worker_count = var.emr_prewarm_driver_count
+        worker_configuration {
+          cpu    = "2 vCPU"
+          memory = "4 GB"
+          disk   = "20 GB"
+        }
       }
     }
   }
 
-  # Pre-warm executor
-  initial_capacity {
-    initial_capacity_type = "EXECUTOR"
-    initial_capacity_config {
-      worker_count = var.emr_prewarm_executor_count
-      worker_configuration {
-        cpu    = "2 vCPU"
-        memory = "4 GB"
-        disk   = "20 GB"
+  # Pre-warm executor (only if count > 0)
+  dynamic "initial_capacity" {
+    for_each = var.emr_prewarm_executor_count > 0 ? [1] : []
+    content {
+      initial_capacity_type = "EXECUTOR"
+      initial_capacity_config {
+        worker_count = var.emr_prewarm_executor_count
+        worker_configuration {
+          cpu    = "2 vCPU"
+          memory = "4 GB"
+          disk   = "20 GB"
+        }
       }
     }
   }

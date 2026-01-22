@@ -3,8 +3,15 @@
 # =============================================================================
 
 locals {
-  # Common Spark submit parameters for batch jobs
-  base_spark_params = "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.executor.instances=1 --conf spark.dynamicAllocation.enabled=false"
+  # Common Spark submit parameters for batch jobs (optimized for 16 vCPU quota)
+  # Dynamic Allocation Strategy:
+  #   - Starts with 1 executor (min capacity)
+  #   - Scales up to 4 executors based on workload
+  #   - Driver: 1 vCPU, Executors: 2 vCPU each
+  #   - Min: 3 vCPU (1 driver + 1 executor)
+  #   - Max: 9 vCPU (1 driver + 4 executors)
+  #   - Leaves 7 vCPU for bronze (3) + buffer (4)
+  base_spark_params = "--conf spark.driver.cores=1 --conf spark.driver.memory=2g --conf spark.executor.cores=2 --conf spark.executor.memory=4g --conf spark.dynamicAllocation.enabled=true --conf spark.dynamicAllocation.minExecutors=1 --conf spark.dynamicAllocation.maxExecutors=4 --conf spark.dynamicAllocation.initialExecutors=1 --conf spark.dynamicAllocation.executorIdleTimeout=60s --conf spark.dynamicAllocation.schedulerBacklogTimeout=5s"
 
   # Spark params with Iceberg catalog
   spark_catalog_params = "--conf spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions --conf spark.sql.adaptive.enabled=true --conf spark.sql.iceberg.handle-timestamp-without-timezone=true --conf spark.sql.catalog.s3tablesbucket=org.apache.iceberg.spark.SparkCatalog --conf spark.sql.catalog.s3tablesbucket.catalog-impl=software.amazon.s3tables.iceberg.S3TablesCatalog --conf spark.sql.catalog.s3tablesbucket.warehouse=${var.s3_tables_bucket_arn} --conf spark.sql.catalog.s3tablesbucket.client.region=${var.region}"

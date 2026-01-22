@@ -81,6 +81,24 @@ resource "aws_cloudwatch_metric_alarm" "batch_pipeline_failure" {
   tags = var.tags
 }
 
+# DLQ High Rate Alarm
+resource "aws_cloudwatch_metric_alarm" "dlq_high_rate" {
+  alarm_name          = "${var.name_prefix}-dlq-high-rate"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "DLQMessagesProduced"
+  namespace           = "WikiStream/Producer"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 10
+  alarm_description   = "High rate of DLQ messages - many malformed events from Wikipedia SSE"
+  alarm_actions       = [var.sns_topic_arn]
+  ok_actions          = [var.sns_topic_arn]
+  treat_missing_data  = "notBreaching"
+
+  tags = var.tags
+}
+
 # -----------------------------------------------------------------------------
 # Lambda Permission for CloudWatch
 # -----------------------------------------------------------------------------
@@ -111,5 +129,6 @@ resource "aws_cloudwatch_dashboard" "pipeline" {
     ecs_cpu_alarm_arn    = aws_cloudwatch_metric_alarm.ecs_cpu.arn
     bronze_health_arn    = aws_cloudwatch_metric_alarm.bronze_health.arn
     pipeline_failure_arn = aws_cloudwatch_metric_alarm.batch_pipeline_failure.arn
+    dlq_alarm_arn        = aws_cloudwatch_metric_alarm.dlq_high_rate.arn
   })
 }

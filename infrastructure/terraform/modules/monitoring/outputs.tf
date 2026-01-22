@@ -27,3 +27,8 @@ output "batch_pipeline_failure_alarm_arn" {
   description = "Batch pipeline failure alarm ARN"
   value       = aws_cloudwatch_metric_alarm.batch_pipeline_failure.arn
 }
+
+output "dlq_high_rate_alarm_arn" {
+  description = "DLQ high rate alarm ARN"
+  value       = aws_cloudwatch_metric_alarm.dlq_high_rate.arn
+}

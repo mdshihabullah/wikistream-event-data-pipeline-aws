@@ -72,6 +72,12 @@ resource "aws_s3_bucket_public_access_block" "data" {
 resource "aws_s3tables_table_bucket" "wikistream" {
   name = "${var.name_prefix}-tables"
 
+  # Encryption Configuration (explicitly defined to prevent provider inconsistency)
+  encryption_configuration = {
+    sse_algorithm = "AES256"
+    kms_key_arn   = null
+  }
+
   maintenance_configuration = {
     # Compaction: Merges small Parquet files into larger ones
     iceberg_compaction = {

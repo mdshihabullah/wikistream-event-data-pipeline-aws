@@ -188,6 +188,16 @@ resource "aws_iam_role_policy" "ecs_task_kafka" {
         Effect   = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "WikiStream/Producer"
+          }
+        }
       }
     ]
   })
