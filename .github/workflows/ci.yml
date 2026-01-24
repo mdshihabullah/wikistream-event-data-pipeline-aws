@@ -104,12 +104,12 @@ jobs:
           tflint_version: latest
 
       - name: Initialize TFLint
-        run: tflint --init
+        run: tflint --init --config ../../.tflint.hcl
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
       - name: Run TFLint
-        run: tflint --recursive --format compact
+        run: tflint --recursive --format compact --config ../../.tflint.hcl
 
       - name: Run TFSec
         uses: aquasecurity/tfsec-action@master

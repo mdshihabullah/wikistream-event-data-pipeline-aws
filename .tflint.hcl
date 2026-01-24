@@ -27,3 +27,7 @@ rule "terraform_required_version" {
 rule "terraform_naming_convention" {
   enabled = false
 }
+
+rule "terraform_unused_declarations" {
+  enabled = false
+}
