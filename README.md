@@ -675,56 +675,101 @@ AWS QuickSight dashboards for stakeholder insights (create manually via Console)
 ```
 wikistream/
 ├── README.md                          # This file
+├── .github/
+│   └── workflows/
+│       └── ci.yml                    # CI/CD pipeline (Python, Terraform, Docker, Secrets)
+├── .ruff.toml                        # Python linting configuration
+├── .bandit                           # Python security scanning configuration
+├── .hadolint.yaml                     # Dockerfile linting configuration
+├── mypy.ini                          # Python static type checking configuration
+├── .gitignore
+├── config/
+│   ├── __init__.py
+│   └── settings.py                   # Domain filters, regions, SLAs
 ├── docs/
+│   ├── architecture_diagram.html
 │   ├── ARCHITECTURE.md                # Detailed architecture documentation
+│   ├── presentation.html
 │   └── RUNBOOK.md                     # Operations runbook
 ├── infrastructure/
 │   └── terraform/
-│       ├── main.tf                    # Root module orchestration
-│       ├── variables.tf               # All configurable parameters
-│       ├── outputs.tf                 # Outputs for scripts
-│       ├── versions.tf                # Terraform & provider versions
+│       ├── .tflint.hcl                # Terraform linting configuration
+│       ├── main.tf                     # Root module orchestration
+│       ├── variables.tf                # All configurable parameters
+│       ├── outputs.tf                  # Outputs for scripts
+│       ├── versions.tf                 # Terraform & provider versions
 │       ├── backend.tf                 # S3 backend configuration
-│       ├── providers.tf               # AWS provider config
+│       ├── providers.tf                # AWS provider config
 │       ├── locals.tf                  # Local values
 │       ├── data.tf                    # Data sources
-│       ├── environments/              # Environment-specific tfvars
-│       │   ├── dev.tfvars             # Development (cost-optimized)
-│       │   ├── staging.tfvars         # Pre-production
-│       │   └── prod.tfvars            # Production (HA)
-│       └── modules/                   # Terraform modules (NEW)
+│       ├── terraform.tfvars.example     # Example variables file
+│       ├── bronze_restart_lambda.zip    # Lambda deployment package
+│       └── modules/                   # Terraform modules
 │           ├── networking/            # VPC, subnets, security groups
+│           │   ├── main.tf
+│           │   ├── outputs.tf
+│           │   └── variables.tf
 │           ├── storage/               # S3 buckets, S3 Tables
+│           │   ├── main.tf
+│           │   ├── outputs.tf
+│           │   └── variables.tf
 │           ├── streaming/             # MSK Kafka cluster
+│           │   ├── main.tf
+│           │   ├── outputs.tf
+│           │   └── variables.tf
 │           ├── compute/               # ECS, EMR, ECR, Lambda
+│           │   ├── main.tf
+│           │   ├── outputs.tf
+│           │   ├── variables.tf
+│           │   └── templates/
+│           │       └── bronze_restart_lambda.py.tftpl
 │           ├── orchestration/         # Step Functions, EventBridge
-│           │   └── templates/         # JSON templates (templatefile)
+│           │   ├── main.tf
+│           │   ├── outputs.tf
+│           │   ├── variables.tf
+│           │   └── templates/
+│           │       ├── batch_pipeline.json.tftpl
+│           │       ├── data_quality.json.tftpl
+│           │       ├── gold_processing.json.tftpl
+│           │       └── silver_processing.json.tftpl
 │           └── monitoring/            # CloudWatch, SNS, alarms
+│               ├── main.tf
+│               ├── outputs.tf
+│               ├── variables.tf
+│               └── templates/
+│                   └── dashboard.json.tftpl
 ├── producer/
 │   ├── kafka_producer.py              # SSE consumer → Kafka producer
 │   ├── requirements.txt               # Python dependencies
 │   └── Dockerfile                     # Container image for ECS
 ├── spark/
+│   ├── requirements.txt               # Spark job dependencies
 │   ├── jobs/
+│   │   ├── __init__.py
 │   │   ├── bronze_streaming_job.py    # Kafka → Bronze (Spark Streaming)
-│   │   ├── silver_batch_job.py        # Bronze → Silver (Batch)
-│   │   ├── gold_batch_job.py          # Silver → Gold (Batch)
 │   │   ├── bronze_dq_gate.py          # Bronze DQ gate
+│   │   ├── silver_batch_job.py        # Bronze → Silver (Batch)
 │   │   ├── silver_dq_gate.py          # Silver DQ gate
+│   │   ├── gold_batch_job.py          # Silver → Gold (Batch)
 │   │   ├── gold_dq_gate.py            # Gold DQ gate
 │   │   └── dq/                        # DQ module (PyDeequ)
+│   │       ├── __init__.py
+│   │       ├── deduplicate_bronze.py
+│   │       ├── dq_checks.py
+│   │       ├── dq_utils.py
+│   │       └── requirements.txt
 │   └── schemas/                       # PySpark schemas
-├── config/
-│   └── settings.py                    # Domain filters, regions, SLAs
+│       ├── __init__.py
+│       ├── bronze_schema.py
+│       ├── silver_schema.py
+│       └── gold_schema.py
 ├── scripts/
 │   ├── setup_terraform_backend.sh     # Setup S3 + DynamoDB for state
 │   ├── create_infra.sh                # Start infrastructure (supports environments)
 │   ├── destroy_all.sh                 # Full teardown (supports environments)
-│   └── destroy_infra_only.sh          # Stop costly resources
-├── monitoring/
-│   ├── docker/                        # Dockerized Grafana setup
-│   └── grafana/dashboards/            # Pipeline health dashboard
-└── quicksight/                        # QuickSight reference configs
+│   ├── destroy_infra_only.sh          # Stop costly resources
+│   ├── test_kafka_messages.py          # Test Kafka message consumption
+│   └── verify_emr_resources.sh       # Verify EMR Serverless resources
 ```
 
 ### Multi-Environment Support
