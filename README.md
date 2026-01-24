@@ -742,6 +742,39 @@ wikistream/
 
 ---
 
+## Continuous Integration (CI)
+
+WikiStream includes a comprehensive CI pipeline that automatically runs on every push to any branch. The workflow validates code quality, infrastructure integrity, and security posture before changes can be deployed.
+
+### CI Workflow
+
+| Job | Purpose | Tools | Behavior |
+|------|---------|--------|----------|
+| **Python & Dockerfile Linting** | Code quality and security | ruff, bandit, mypy, hadolint | Warnings only (won't fail pipeline) |
+| **Terraform CI** | Infrastructure validation | terraform fmt/validate, tflint, tfsec | Fails on issues |
+| **Docker Security Scan** | Container vulnerability scanning | Trivy | Fails on CRITICAL, warns on HIGH |
+| **Secrets Scanning** | Detect leaked credentials | Trivy secret scanner | Fails on CRITICAL/HIGH |
+
+### CI Configuration Files
+
+- `.github/workflows/ci.yml` - Main CI pipeline definition
+- `.ruff.toml` - Python linting rules
+- `.bandit` - Security scanning configuration
+- `mypy.ini` - Static type checking configuration
+- `.tflint.hcl` - Terraform linting rules
+- `.hadolint.yaml` - Dockerfile linting rules
+
+### What Gets Checked
+
+- **Python**: Code style, unused imports, security vulnerabilities, type hints
+- **Terraform**: Syntax, formatting, AWS best practices, security issues
+- **Docker**: Security vulnerabilities in images, Dockerfile best practices
+- **Secrets**: API keys, passwords, tokens across all files
+
+The CI ensures code quality and security standards are maintained throughout development.
+
+---
+
 ## Implementation Status
 
 | Component | Status | Notes |
@@ -770,13 +803,13 @@ wikistream/
 Built as a portfolio project demonstrating modern data engineering on AWS.
 
 **Skills Demonstrated:**
-- Real-time streaming with Kafka (MSK KRaft 3.9.x)
+- Real-time streaming with Kafka (MSK Kafka 3.9.x)
 - Apache Iceberg 1.10.0 on S3 Tables
 - Serverless Spark (EMR Serverless 7.12.0, Spark 3.5)
 - Infrastructure as Code (Terraform)
 - Medallion Architecture (Bronze streaming, Silver/Gold batch)
 - Data Quality Gates (AWS Deequ 2.0.7 with audit trail)
-- Pipeline Orchestration (Step Functions self-looping batch pipeline)
+- Pipeline Orchestration (self-looping batch pipeline via Step Functions )
 - Observability (CloudWatch Dashboard, Alarms, SNS Alerts)
 - Self-healing infrastructure (Lambda auto-restart on health check failure)
-- Cost-optimized dev workflow (destroy/create scripts)
+- Cost-optimized development workflow (destroy/create scripts)
