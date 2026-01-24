@@ -110,7 +110,13 @@ if [ -z "$FORCE_FLAG" ]; then
     # Convert environment to uppercase for confirmation
     ENV_UPPER=$(echo "${ENVIRONMENT}" | tr '[:lower:]' '[:upper:]')
     echo -n "Type 'DELETE ${ENV_UPPER}' to confirm: "
-    read confirm
+    read -t 60 confirm || {
+        log_error "Timeout waiting for confirmation or no input provided"
+        echo ""
+        echo "Tip: Use --force flag to skip confirmation:"
+        echo "  ./scripts/destroy_all.sh ${ENVIRONMENT} --force"
+        exit 1
+    }
     if [ "$confirm" != "DELETE ${ENV_UPPER}" ]; then
         log_error "Cancelled. You must type 'DELETE ${ENV_UPPER}' exactly."
         echo ""
@@ -546,7 +552,98 @@ log_success "CloudWatch resources deleted"
 DELETION_STATUS["cloudwatch"]="done"
 
 # =============================================================================
-# STEP 11: CLEANUP REMAINING RESOURCES (Fallback)
+# STEP 11: CLEAN UP ORPHANED RESOURCES BEFORE TERRAFORM DESTROY
+# =============================================================================
+log_step "STEP 11: Cleaning Up Orphaned Resources"
+
+# Clean up orphaned MSK configurations (not in use by any cluster)
+log_info "Checking for orphaned MSK configurations..."
+ORPHAN_MSK_CONFIGS=$(aws kafka list-configurations --profile $AWS_PROFILE --query "Configurations[?contains(Name,\`${NAME_PREFIX}-\`)].Arn" --output text 2>/dev/null || echo "")
+if [ -n "$ORPHAN_MSK_CONFIGS" ]; then
+    for CONFIG_ARN in $ORPHAN_MSK_CONFIGS; do
+        CONFIG_NAME=$(aws kafka describe-configuration --profile $AWS_PROFILE --arn "$CONFIG_ARN" --query 'Name' --output text 2>/dev/null || echo "unknown")
+        
+        # Check if any cluster is using this configuration
+        CLUSTERS_USING_CONFIG=""
+        MSK_CLUSTERS=$(aws kafka list-clusters-v2 --profile $AWS_PROFILE --query "ClusterInfoList[?contains(ClusterName,\`${NAME_PREFIX}\`)].ClusterArn" --output text 2>/dev/null || echo "")
+        if [ -n "$MSK_CLUSTERS" ]; then
+            for CLUSTER_ARN in $MSK_CLUSTERS; do
+                CLUSTER_CONFIG_ARN=$(aws kafka describe-cluster-v2 --profile $AWS_PROFILE --cluster-arn "$CLUSTER_ARN" --query 'ClusterInfo.CurrentVersion.ConfigurationArn' --output text 2>/dev/null || echo "")
+                if [ "$CLUSTER_CONFIG_ARN" == "$CONFIG_ARN" ]; then
+                    CLUSTERS_USING_CONFIG="$CLUSTERS_USING_CONFIG $CLUSTER_ARN"
+                fi
+            done
+        fi
+        
+        if [ -z "$CLUSTERS_USING_CONFIG" ]; then
+            log_info "Deleting orphaned MSK config: $CONFIG_NAME"
+            aws kafka delete-configuration --profile $AWS_PROFILE --arn "$CONFIG_ARN" 2>/dev/null || true
+            log_success "  Deleted: $CONFIG_NAME"
+        else
+            log_info "Skipping MSK config $CONFIG_NAME (in use by cluster)"
+        fi
+    done
+else
+    log_info "No MSK configurations to clean"
+fi
+
+# Clean up orphaned CloudWatch log groups
+log_info "Checking for orphaned CloudWatch log groups..."
+ORPHAN_LOG_GROUPS=$(aws logs describe-log-groups --profile $AWS_PROFILE --log-group-name-prefix "/aws/msk/${NAME_PREFIX}" --query 'logGroups[*].logGroupName' --output text 2>/dev/null || echo "")
+if [ -n "$ORPHAN_LOG_GROUPS" ]; then
+    for LOG_GROUP in $ORPHAN_LOG_GROUPS; do
+        log_info "Deleting orphaned log group: $LOG_GROUP"
+        aws logs delete-log-group --profile $AWS_PROFILE --log-group-name "$LOG_GROUP" 2>/dev/null || true
+        log_success "  Deleted: $LOG_GROUP"
+    done
+else
+    log_info "No CloudWatch log groups to clean"
+fi
+
+# Clean up orphaned Lambda functions
+log_info "Checking for orphaned Lambda functions..."
+ORPHAN_LAMBDAS=$(aws lambda list-functions --profile $AWS_PROFILE --query "Functions[?contains(FunctionName,\`${NAME_PREFIX}-restart\`)].FunctionName" --output text 2>/dev/null || echo "")
+if [ -n "$ORPHAN_LAMBDAS" ]; then
+    for FUNC_NAME in $ORPHAN_LAMBDAS; do
+        log_info "Deleting orphaned Lambda: $FUNC_NAME"
+        aws lambda delete-function --profile $AWS_PROFILE --function-name "$FUNC_NAME" 2>/dev/null || true
+        log_success "  Deleted: $FUNC_NAME"
+    done
+else
+    log_info "No Lambda functions to clean"
+fi
+
+# Clean up orphaned IAM roles
+log_info "Checking for orphaned IAM roles..."
+ORPHAN_IAM_ROLES=$(aws iam list-roles --profile $AWS_PROFILE --query "Roles[?contains(RoleName,\`${NAME_PREFIX}-restart-lambda\`)].RoleName" --output text 2>/dev/null || echo "")
+if [ -n "$ORPHAN_IAM_ROLES" ]; then
+    for ROLE_NAME in $ORPHAN_IAM_ROLES; do
+        log_warning "Found orphaned IAM role: $ROLE_NAME"
+        
+        # Detach all managed policies
+        MANAGED_POLICIES=$(aws iam list-attached-role-policies --profile $AWS_PROFILE --role-name "$ROLE_NAME" --query 'AttachedPolicies[*].PolicyArn' --output text 2>/dev/null || echo "")
+        for POLICY_ARN in $MANAGED_POLICIES; do
+            aws iam detach-role-policy --profile $AWS_PROFILE --role-name "$ROLE_NAME" --policy-arn "$POLICY_ARN" 2>/dev/null || true
+        done
+        
+        # Delete all inline policies
+        INLINE_POLICIES=$(aws iam list-role-policies --profile $AWS_PROFILE --role-name "$ROLE_NAME" --query 'PolicyNames[]' --output text 2>/dev/null || echo "")
+        for POLICY_NAME in $INLINE_POLICIES; do
+            aws iam delete-role-policy --profile $AWS_PROFILE --role-name "$ROLE_NAME" --policy-name "$POLICY_NAME" 2>/dev/null || true
+        done
+        
+        # Delete role
+        aws iam delete-role --profile $AWS_PROFILE --role-name "$ROLE_NAME" 2>/dev/null || true
+        log_success "  Deleted: $ROLE_NAME"
+    done
+else
+    log_info "No IAM roles to clean"
+fi
+
+log_success "Orphaned resources cleanup completed"
+
+# =============================================================================
+# STEP 14: CLEANUP REMAINING RESOURCES (Fallback)
 # =============================================================================
 log_step "STEP 11: Cleaning Up Remaining Resources"
 
