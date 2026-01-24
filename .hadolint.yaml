@@ -1,0 +1,28 @@
+# Hadolint configuration for WikiStream Dockerfile
+# Reference: https://github.com/hadolint/hadolint
+
+ignored:
+  # DL3007: Using latest is prone to errors if the image will ever update. We're using cgr.dev/chainguard/python:latest-dev
+  # which is explicitly maintained for security and daily updates
+  - DL3007
+
+  # DL3008: Pin versions in apt-get install. Chainguard images don't use apt-get
+  - DL3008
+
+  # DL3018: Pin versions in pip. We use version ranges in requirements.txt
+  - DL3018
+
+  # DL3033: Specify version with yum install. Not applicable - Chainguard uses apk or no package manager
+  - DL3033
+
+  # DL3045: 'COPY --from' without explicit origin. We use multi-stage build with named stages
+  - DL3045
+
+  # DL3059: Multiple consecutive 'RUN' instructions. Acceptable for readability
+  - DL3059
+
+  # SC1091: Not following: File not included. False positive in Dockerfile context
+  - SC1091
+
+  # SC2155: Declare and assign separately to avoid masking return values. Not critical for CI
+  - SC2155

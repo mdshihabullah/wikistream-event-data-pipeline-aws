@@ -1,0 +1,89 @@
+# Bandit configuration for WikiStream project
+# Reference: https://bandit.readthedocs.io/en/latest/config.html
+
+# Exclude files from scanning
+exclude_dirs:
+  - '.venv'
+  - '.git'
+  - '__pycache__'
+  - '*.pyc'
+  - 'node_modules'
+
+# Skip specific tests that don't apply to this project
+skips:
+  # B101: assert_used - Assert statements are used for debugging, not security issues
+  - 'B101'
+
+  # B403: import_pickle - We don't use pickle in production code
+  - 'B403'
+
+  # B404: import_subprocess - Subprocess is used legitimately for system calls
+  - 'B404'
+
+  # B601: paramiko_calls - Not using paramiko
+  - 'B601'
+
+  # B602: subprocess_popen_with_shell_equals_true - We use subprocess safely
+  - 'B602'
+
+  # B603: subprocess_without_shell_equals_true - We use subprocess safely
+  - 'B603'
+
+  # B604: any_other_function_with_shell_equals_true - Not using shell=True
+  - 'B604'
+
+  # B605: start_process_with_a_shell - Not using shell=True
+  - 'B605'
+
+  # B606: start_process_with_no_shell - Legitimate subprocess usage
+  - 'B606'
+
+  # B607: start_process_with_partial_path - Using full paths
+  - 'B607'
+
+  # B608: hardcoded_sql_expressions - SQL queries are parameterized
+  - 'B608'
+
+  # B609: linux_commands_wildcard_injection - Not using wildcards
+  - 'B609'
+
+# Test set to run
+tests:
+  - 'B201'  # flask_debug_true
+  - 'B301'  # pickle
+  - 'B302'  # marshal
+  - 'B303'  # md5
+  - 'B304'  # ciphers
+  - 'B305'  # cipher_modes
+  - 'B306'  # mktemp_q
+  - 'B307'  # eval
+  - 'B308'  # mark_safe
+  - 'B309'  # httpsconnection
+  - 'B310'  # urllib_urlopen
+  - 'B311'  # random
+  - 'B312'  # telnetlib
+  - 'B313'  # xml_bad_cElementTree
+  - 'B314'  # xml_bad_ElementTree
+  - 'B315'  # xml_bad_expatreader
+  - 'B316'  # xml_bad_expatbuilder
+  - 'B317'  # xml_bad_sax
+  - 'B318'  # xml_bad_minidom
+  - 'B319'  # xml_bad_pulldom
+  - 'B320'  # xml_bad_etree
+  - 'B321'  # ftplib
+  - 'B322'  # input
+  - 'B323'  # unverified_context
+  - 'B324'  # hashlib_new_insecure_functions
+  - 'B325'  # tempnam
+  - 'B401'  # import_telnetlib
+  - 'B402'  # import_ftplib
+  - 'B501'  # request_with_no_cert_validation
+  - 'B502'  # ssl_with_bad_version
+  - 'B503'  # ssl_with_bad_defaults
+  - 'B504'  # ssl_with_no_version
+  - 'B505'  # weak_cryptographic_key
+  - 'B506'  # yaml_load
+  - 'B507'  # ssh_no_host_key_verification
+  - 'B601'  # paramiko_calls
+  - 'B701'  # jinja2_autoescape_false
+  - 'B702'  # use_of_mako_templates

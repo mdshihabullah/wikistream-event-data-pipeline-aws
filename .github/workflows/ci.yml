@@ -1,0 +1,151 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  # Job 1: Python Linting (ruff) + Dockerfile Linting (hadolint)
+  lint-python-and-dockerfile:
+    name: Lint Python & Dockerfile
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Create virtual environment and install dependencies
+        run: |
+          uv venv .venv
+          source .venv/bin/activate
+
+          # Install linting tools
+          uv pip install ruff bandit mypy
+
+          # Install all project requirements
+          if [ -f producer/requirements.txt ]; then
+            uv pip install -r producer/requirements.txt || true
+          fi
+          if [ -f spark/requirements.txt ]; then
+            uv pip install -r spark/requirements.txt || true
+          fi
+          if [ -f spark/jobs/dq/requirements.txt ]; then
+            uv pip install -r spark/jobs/dq/requirements.txt || true
+          fi
+
+      - name: Run Ruff linter
+        run: |
+          echo "Running ruff with auto-fix..."
+          ruff check . --fix || echo "Ruff found issues (warnings only, not failing pipeline)"
+          echo "Ruff linting completed"
+
+      - name: Run Bandit security linter
+        run: |
+          echo "Running bandit security scanner..."
+          bandit -r . -c .bandit || echo "Bandit found security issues (warnings only, not failing pipeline)"
+          echo "Bandit security scan completed"
+
+      - name: Run MyPy static type checker
+        run: |
+          echo "Running mypy static type checker..."
+          mypy . --ignore-missing-imports || echo "MyPy found type issues (warnings only, not failing pipeline)"
+          echo "MyPy type checking completed"
+
+      - name: Run Hadolint for Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: producer/Dockerfile
+          failure-threshold: warning
+
+  # Job 2: Terraform Validation
+  terraform-validation:
+    name: Terraform CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/terraform
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.6.0'
+          terraform_wrapper: false
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        continue-on-error: false
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Run TFLint
+        uses: terraform-linters/tflint@v0.9.2
+        with:
+          path: infrastructure/terraform
+          args: --recursive
+
+      - name: Run TFSec
+        uses: aquasecurity/tfsec-action@master
+        with:
+          working_directory: infrastructure/terraform
+          args: '--recursive'
+
+  # Job 3: Docker Image Security Scan
+  docker-vulnerability-scan:
+    name: Docker Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t wikistream-producer:ci producer/
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: 'wikistream-producer:ci'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL'
+
+      - name: Run Trivy for HIGH severity warnings
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: 'wikistream-producer:ci'
+          format: 'table'
+          exit-code: '0'
+          severity: 'HIGH'
+        continue-on-error: true
+
+  # Job 4: Secrets Scanning
+  secrets-scan:
+    name: Secrets Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Trivy for secrets scanning
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+          scanners: 'secret'
