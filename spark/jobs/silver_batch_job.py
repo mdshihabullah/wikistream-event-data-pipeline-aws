@@ -139,6 +139,10 @@ def transform_bronze_to_silver(df):
     df = clean_user_column(df)
     df = add_quality_flags(df)
     
+    # Deduplicate by event_id - keep the most recent (max bronze_processed_at)
+    # This handles historical duplicates in bronze table
+    df = df.dropDuplicates(["event_id"])
+    
     return (
         df
         .withColumn("silver_processed_at", current_timestamp())
