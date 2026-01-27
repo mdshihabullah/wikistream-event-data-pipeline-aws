@@ -118,3 +118,27 @@ output "emr_serverless_log_group" {
   description = "CloudWatch Log Group for EMR Serverless jobs"
   value       = module.monitoring.emr_serverless_log_group
 }
+
+# -----------------------------------------------------------------------------
+# Analytics (QuickSight)
+# -----------------------------------------------------------------------------
+
+output "quicksight_data_source_arn" {
+  description = "QuickSight Athena data source ARN"
+  value       = module.analytics.quicksight_data_source_arn
+}
+
+output "quicksight_hourly_stats_dataset_arn" {
+  description = "QuickSight dataset ARN for hourly_stats"
+  value       = module.analytics.quicksight_hourly_stats_dataset_arn
+}
+
+output "quicksight_risk_scores_dataset_arn" {
+  description = "QuickSight dataset ARN for risk_scores"
+  value       = module.analytics.quicksight_risk_scores_dataset_arn
+}
+
+output "quicksight_daily_summary_dataset_arn" {
+  description = "QuickSight dataset ARN for daily_analytics_summary"
+  value       = module.analytics.quicksight_daily_summary_dataset_arn
+}

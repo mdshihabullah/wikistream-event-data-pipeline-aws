@@ -552,9 +552,52 @@ log_success "CloudWatch resources deleted"
 DELETION_STATUS["cloudwatch"]="done"
 
 # =============================================================================
-# STEP 11: CLEAN UP ORPHANED RESOURCES BEFORE TERRAFORM DESTROY
+# STEP 11: REMOVE ACCOUNT-LEVEL CATALOGS & LF INTEGRATION
 # =============================================================================
-log_step "STEP 11: Cleaning Up Orphaned Resources"
+log_step "STEP 11: Removing S3 Tables Catalog Integration"
+
+# Remove Athena data catalog (account-level)
+log_info "Deleting Athena data catalog: s3tablescatalog"
+aws athena delete-data-catalog --profile $AWS_PROFILE --region "$AWS_REGION" \
+    --name "s3tablescatalog" --no-cli-pager 2>/dev/null || true
+
+# Remove Glue catalogs (account-level + env-specific)
+log_info "Deleting Glue catalog: ${AWS_ACCOUNT_ID}:s3tablescatalog"
+aws glue delete-catalog --profile $AWS_PROFILE --region "$AWS_REGION" \
+    --catalog-id "${AWS_ACCOUNT_ID}:s3tablescatalog" --no-cli-pager 2>/dev/null || true
+
+log_info "Deleting Glue catalog: ${AWS_ACCOUNT_ID}:s3tablescatalog/${NAME_PREFIX}-tables"
+aws glue delete-catalog --profile $AWS_PROFILE --region "$AWS_REGION" \
+    --catalog-id "${AWS_ACCOUNT_ID}:s3tablescatalog/${NAME_PREFIX}-tables" --no-cli-pager 2>/dev/null || true
+
+# Deregister S3 Tables wildcard resource from Lake Formation
+log_info "Deregistering Lake Formation S3 Tables resource"
+aws lakeformation deregister-resource --profile $AWS_PROFILE --region "$AWS_REGION" \
+    --resource-arn "arn:aws:s3tables:${AWS_REGION}:${AWS_ACCOUNT_ID}:bucket/*" --no-cli-pager 2>/dev/null || true
+
+# Reset Lake Formation settings to defaults (no admins, IAM allowed principals)
+log_info "Resetting Lake Formation data lake settings"
+aws lakeformation put-data-lake-settings --profile $AWS_PROFILE --region "$AWS_REGION" \
+    --cli-input-json '{
+      "DataLakeSettings": {
+        "DataLakeAdmins": [],
+        "CreateDatabaseDefaultPermissions": [{
+          "Principal": { "DataLakePrincipalIdentifier": "IAM_ALLOWED_PRINCIPALS" },
+          "Permissions": ["ALL"]
+        }],
+        "CreateTableDefaultPermissions": [{
+          "Principal": { "DataLakePrincipalIdentifier": "IAM_ALLOWED_PRINCIPALS" },
+          "Permissions": ["ALL"]
+        }]
+      }
+    }' --no-cli-pager 2>/dev/null || true
+
+log_success "Account-level S3 Tables catalogs and LF integration removed"
+
+# =============================================================================
+# STEP 12: CLEAN UP ORPHANED RESOURCES BEFORE TERRAFORM DESTROY
+# =============================================================================
+log_step "STEP 12: Cleaning Up Orphaned Resources"
 
 # Clean up orphaned MSK configurations (not in use by any cluster)
 log_info "Checking for orphaned MSK configurations..."
@@ -643,9 +686,9 @@ fi
 log_success "Orphaned resources cleanup completed"
 
 # =============================================================================
-# STEP 14: CLEANUP REMAINING RESOURCES (Fallback)
+# STEP 13: CLEANUP REMAINING RESOURCES (Fallback)
 # =============================================================================
-log_step "STEP 11: Cleaning Up Remaining Resources"
+log_step "STEP 13: Cleaning Up Remaining Resources"
 
 # Delete EMR applications
 EMR_APPS=$(aws emr-serverless list-applications --profile $AWS_PROFILE --query "applications[?contains(name,\`${NAME_PREFIX}\`)].id" --output text 2>/dev/null || echo "")
@@ -735,9 +778,9 @@ fi
 log_success "Cleanup completed"
 
 # =============================================================================
-# STEP 12: CLEAN LOCAL TERRAFORM STATE (Keep .terraform for caching)
+# STEP 14: CLEAN LOCAL TERRAFORM STATE (Keep .terraform for caching)
 # =============================================================================
-log_step "STEP 12: Cleaning Local Terraform State"
+log_step "STEP 14: Cleaning Local Terraform State"
 
 cd "$PROJECT_ROOT/infrastructure/terraform"
 if [ -f "terraform.tfstate" ]; then
@@ -753,9 +796,9 @@ fi
 rm -f "$PROJECT_ROOT/outputs.json" 2>/dev/null || true
 
 # =============================================================================
-# STEP 13: FINAL VERIFICATION
+# STEP 15: FINAL VERIFICATION
 # =============================================================================
-log_step "STEP 13: Final Verification"
+log_step "STEP 15: Final Verification"
 
 VERIFY_ERRORS=0
 

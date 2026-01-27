@@ -446,6 +446,34 @@ module "monitoring" {
 }
 
 # -----------------------------------------------------------------------------
+# Analytics (QuickSight)
+# -----------------------------------------------------------------------------
+
+module "analytics" {
+  source = "./modules/analytics"
+
+  name_prefix                          = local.name_prefix
+  account_id                           = local.account_id
+  region                               = local.region
+  s3_tables_bucket_name                = module.storage.s3_tables_bucket_name
+  s3_tables_bucket_arn                 = module.storage.s3_tables_bucket_arn
+  quicksight_enable_subscription        = var.quicksight_enable_subscription
+  quicksight_account_name               = var.quicksight_account_name
+  quicksight_admin_email                = var.quicksight_admin_email
+  quicksight_edition                    = var.quicksight_edition
+  quicksight_authentication_method      = var.quicksight_authentication_method
+  quicksight_namespace                  = var.quicksight_namespace
+  quicksight_user_name                  = var.quicksight_user_name
+  quicksight_athena_workgroup           = var.quicksight_athena_workgroup
+  quicksight_import_mode                = var.quicksight_import_mode
+  quicksight_service_role_name          = var.quicksight_service_role_name
+  quicksight_enable_lakeformation_permissions = var.quicksight_enable_lakeformation_permissions
+  tags                                 = local.common_tags
+
+  depends_on = [module.storage]
+}
+
+# -----------------------------------------------------------------------------
 # S3 Tables Bucket Policy
 # -----------------------------------------------------------------------------
 
