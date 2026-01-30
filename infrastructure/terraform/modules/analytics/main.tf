@@ -2,7 +2,12 @@ locals {
   quicksight_user_arn = "arn:aws:quicksight:${var.region}:${var.account_id}:user/${var.quicksight_namespace}/${var.quicksight_user_name}"
   s3tables_catalog_id = "${var.account_id}:s3tablescatalog/${var.s3_tables_bucket_name}"
   s3tables_catalog    = "s3tablescatalog"
+  s3tables_federated_identifier = "arn:aws:s3tables:${var.region}:${var.account_id}:bucket/*"
   quicksight_tables   = ["hourly_stats", "risk_scores", "daily_analytics_summary"]
+  athena_principal_arns = distinct(concat(
+    ["arn:aws:iam::${var.account_id}:root", data.aws_caller_identity.current.arn],
+    var.athena_principal_arns
+  ))
 }
 
 data "aws_caller_identity" "current" {}
@@ -21,7 +26,11 @@ resource "aws_iam_role" "lakeformation_admin" {
       },
       {
         Effect = "Allow"
-        Action = "sts:AssumeRole"
+        Action = [
+          "sts:AssumeRole",
+          "sts:SetSourceIdentity",
+          "sts:SetContext"
+        ]
         Principal = {
           Service = "lakeformation.amazonaws.com"
         }
@@ -67,17 +76,44 @@ resource "null_resource" "lakeformation_admin_settings" {
   provisioner "local-exec" {
     command = <<EOT
 sleep 10
+existing_admins_json=$(aws lakeformation get-data-lake-settings --region ${var.region} --query 'DataLakeSettings.DataLakeAdmins' --output json 2>/dev/null || echo "[]")
+if command -v python3 >/dev/null 2>&1; then
+  merged_payload=$(EXISTING_ADMINS="$existing_admins_json" DESIRED_ADMINS='${jsonencode([
+    for admin_arn in local.lakeformation_admin_arns : {
+      DataLakePrincipalIdentifier = admin_arn
+    }
+  ])}' python3 - <<'PY'
+import json
+import os
+
+existing = json.loads(os.environ.get("EXISTING_ADMINS", "[]"))
+desired = json.loads(os.environ.get("DESIRED_ADMINS", "[]"))
+
+seen = set()
+merged = []
+for entry in existing + desired:
+  principal = entry.get("DataLakePrincipalIdentifier")
+  if principal and principal not in seen:
+    merged.append({"DataLakePrincipalIdentifier": principal})
+    seen.add(principal)
+
+print(json.dumps({"DataLakeSettings": {"DataLakeAdmins": merged}}))
+PY
+)
+else
+  merged_payload='${jsonencode({
+    DataLakeSettings = {
+      DataLakeAdmins = [
+        for admin_arn in local.lakeformation_admin_arns : {
+          DataLakePrincipalIdentifier = admin_arn
+        }
+      ]
+    }
+  })}'
+fi
 aws lakeformation put-data-lake-settings \
   --region ${var.region} \
-  --cli-input-json '${jsonencode({
-  DataLakeSettings = {
-    DataLakeAdmins = [
-      for admin_arn in local.lakeformation_admin_arns : {
-        DataLakePrincipalIdentifier = admin_arn
-      }
-    ]
-  }
-})}'
+  --cli-input-json "$merged_payload"
 EOT
   }
 
@@ -90,13 +126,16 @@ EOT
 
 resource "null_resource" "s3tables_catalog_integration" {
   triggers = {
-    bucket_arn = "arn:aws:s3tables:${var.region}:${var.account_id}:bucket/*"
+    bucket_arn = local.s3tables_federated_identifier
     role_arn   = aws_iam_role.lakeformation_admin.arn
     region     = var.region
   }
 
   provisioner "local-exec" {
     command = <<EOT
+aws lakeformation deregister-resource \
+  --region ${self.triggers.region} \
+  --resource-arn '${var.s3_tables_bucket_arn}' || true
 aws lakeformation register-resource \
   --region ${self.triggers.region} \
   --resource-arn '${self.triggers.bucket_arn}' \
@@ -114,7 +153,7 @@ aws glue create-catalog \
   Name = "s3tablescatalog",
   CatalogInput = {
     FederatedCatalog = {
-      Identifier = "arn:aws:s3tables:${var.region}:${var.account_id}:bucket/*",
+      Identifier = local.s3tables_federated_identifier,
       ConnectionName = "aws:s3tables"
     },
     CreateDatabaseDefaultPermissions = [],
@@ -129,7 +168,7 @@ resource "null_resource" "athena_s3tables_catalog" {
   triggers = {
     catalog_id        = local.s3tables_catalog_id
     region            = var.region
-    reconcile_version = "1"
+    reconcile_version = "2"
   }
 
   provisioner "local-exec" {
@@ -593,14 +632,17 @@ resource "aws_quicksight_data_set" "daily_analytics_summary" {
 }
 
 locals {
-  lakeformation_principals = {
-    quicksight_user = local.quicksight_user_arn
-    service_role    = data.aws_iam_role.quicksight_service_role.arn
-    caller          = data.aws_caller_identity.current.arn
+  lakeformation_principal_arns = distinct(concat(
+    [local.quicksight_user_arn, data.aws_iam_role.quicksight_service_role.arn],
+    local.athena_principal_arns
+  ))
+  lakeformation_principal_map = {
+    for arn in local.lakeformation_principal_arns :
+    "principal-${substr(md5(arn), 0, 8)}" => arn
   }
   lakeformation_table_grants = {
     for item in flatten([
-      for principal_key, principal_arn in local.lakeformation_principals : [
+      for principal_key, principal_arn in local.lakeformation_principal_map : [
         for table_name in local.quicksight_tables : {
           key       = "${principal_key}-${table_name}"
           principal = principal_arn
@@ -615,13 +657,13 @@ locals {
 }
 
 resource "null_resource" "lakeformation_database_grants" {
-  for_each = var.quicksight_enable_lakeformation_permissions ? local.lakeformation_principals : {}
+  for_each = var.quicksight_enable_lakeformation_permissions ? local.lakeformation_principal_map : {}
 
   triggers = {
     principal  = each.value
     catalog_id = local.s3tables_catalog_id
     region     = var.region
-    reconcile_version = "1"
+    reconcile_version = "2"
   }
 
   provisioner "local-exec" {
@@ -635,6 +677,8 @@ aws lakeformation grant-permissions \
 })}' || true
 EOT
   }
+
+  depends_on = [null_resource.s3tables_catalog_integration]
 
   provisioner "local-exec" {
     when = destroy
@@ -658,7 +702,7 @@ resource "null_resource" "lakeformation_table_grants" {
     table      = each.value.table
     catalog_id = local.s3tables_catalog_id
     region     = var.region
-    reconcile_version = "1"
+    reconcile_version = "2"
   }
 
   provisioner "local-exec" {
@@ -672,6 +716,8 @@ aws lakeformation grant-permissions \
 })}' || true
 EOT
   }
+
+  depends_on = [null_resource.s3tables_catalog_integration]
 
   provisioner "local-exec" {
     when = destroy

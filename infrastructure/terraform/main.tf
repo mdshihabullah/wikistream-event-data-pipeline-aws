@@ -457,6 +457,7 @@ module "analytics" {
   region                               = local.region
   s3_tables_bucket_name                = module.storage.s3_tables_bucket_name
   s3_tables_bucket_arn                 = module.storage.s3_tables_bucket_arn
+  athena_principal_arns                = var.athena_principal_arns
   quicksight_enable_subscription        = var.quicksight_enable_subscription
   quicksight_account_name               = var.quicksight_account_name
   quicksight_admin_email                = var.quicksight_admin_email

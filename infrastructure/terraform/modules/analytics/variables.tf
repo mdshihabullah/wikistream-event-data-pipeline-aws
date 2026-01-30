@@ -23,6 +23,12 @@ variable "s3_tables_bucket_arn" {
   type        = string
 }
 
+variable "athena_principal_arns" {
+  description = "Additional IAM principal ARNs for Athena Lake Formation grants"
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)

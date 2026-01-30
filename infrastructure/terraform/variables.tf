@@ -280,6 +280,12 @@ variable "quicksight_enable_lakeformation_permissions" {
   default     = true
 }
 
+variable "athena_principal_arns" {
+  description = "IAM principal ARNs to grant Athena access via Lake Formation"
+  type        = list(string)
+  default     = ["arn:aws:iam::160884803380:user/shihab-ne"]
+}
+
 # -----------------------------------------------------------------------------
 # Step Functions Configuration
 # -----------------------------------------------------------------------------
