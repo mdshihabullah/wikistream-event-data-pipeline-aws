@@ -821,73 +821,8 @@
                     <span>Business Context</span>
                         </div>
             </section>
-            
-            <!-- ==================== SLIDE 3: C4 Level 1 - System Context ==================== -->
-            <section>
-                <h2>Architecture: System Context</h2>
-                <p class="tiny">System in context with external systems and users</p>
-                
-                <div class="c4-diagram">
-                    <div class="c4-context">
-                        <div class="c4-box c4-external" style="min-width: 100px;">
-                            <div class="icon">🌐</div>
-                            <strong>Wikipedia</strong>
-                            <div class="desc">EventStreams API<br>Server-Sent Events</div>
-                    </div>
-                        
-                        <div class="c4-arrow">
-                            <div>→ Real-time →</div>
-                            <div class="label">SSE Stream</div>
-                        </div>
-                        
-                        <div class="c4-box c4-system">
-                            <div class="icon">⚡</div>
-                            <strong>WikiStream Pipeline</strong>
-                            <div class="desc">Ingest • Process • Store<br>Quality Gates • Analytics</div>
-                        </div>
-                        
-                        <div class="c4-arrow">
-                            <div>→ Insights →</div>
-                            <div class="label">Dashboards</div>
-                        </div>
-                        
-                        <div class="c4-box c4-user" style="min-width: 100px;">
-                            <div class="icon">👥</div>
-                            <strong>Stakeholders</strong>
-                            <div class="desc">Data Engineers<br>Analysts • Ops</div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="two-col">
-                    <div>
-                        <h3>System Responsibilities</h3>
-                        <ul style="font-size: 0.75em;">
-                            <li>Ingest real-time SSE stream continuously (24/7)</li>
-                            <li>Buffer events in Kafka for reliability & replay</li>
-                            <li>Process through medallion layers (Bronze → Silver → Gold)</li>
-                            <li>Validate data quality at each transformation</li>
-                            <li>Store in ACID-compliant Iceberg tables</li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h3>Key Outputs</h3>
-                        <ul style="font-size: 0.75em;">
-                            <li><strong>Hourly Stats</strong> — Volume, users, content by domain</li>
-                            <li><strong>Risk Scores</strong> — Entity risk (0.0-1.0)</li>
-                            <li><strong>Daily Summary</strong> — Platform health KPIs</li>
-                            <li><strong>DQ Audit Trail</strong> — Evidence for compliance</li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <div class="slide-footer">
-                    <span class="brand">WikiStream</span>
-                    <span>C4 Level 1 — System Context</span>
-                </div>
-            </section>
-            
-            <!-- ==================== SLIDE 4: High-Level Architecture ==================== -->
+
+            <!-- ==================== SLIDE 3: High-Level Architecture ==================== -->
             <section>
                 <h2>Architecture: High-Level Flow</h2>
                 <p class="tiny">End-to-end data flow with medallion architecture and DQ gates</p>
@@ -939,6 +874,11 @@
                         <h4>🥇 Gold</h4>
                         <p>Aggregated<br>Risk Scores</p>
                     </div>
+                    <span class="dq-arrow">→ Analytics →</span>
+                    <div class="medal" style="background: linear-gradient(135deg, #9B59B6, #8E44AD);">
+                        <h4>📊 QuickSight</h4>
+                        <p>BI & Dashboard<br>Analytics</p>
+                    </div>
                 </div>
                 
                 <div class="two-col" style="margin-top: 0.3em;">
@@ -949,6 +889,7 @@
                             <tr><td><strong>Initial Trigger</strong></td><td>EventBridge Scheduler</td></tr>
                             <tr><td><strong>Auto-Recovery</strong></td><td>Lambda + CloudWatch Alarm</td></tr>
                             <tr><td><strong>Alerts</strong></td><td>SNS (email notifications)</td></tr>
+                            <tr><td><strong>Analytics</strong></td><td>Amazon QuickSight</td></tr>
                         </table>
                     </div>
                     <div>
@@ -968,7 +909,7 @@
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 5: Detailed Architecture ==================== -->
+            <!-- ==================== SLIDE 4: Detailed Architecture ==================== -->
             <section>
                 <h2>Architecture: Container Detail</h2>
                 <p class="tiny">AWS VPC (us-east-1)</p>
@@ -1036,9 +977,9 @@
                         </div>
                     </div>
                     
-                    <!-- Bottom Row: Storage + Operations -->
-                    <div style="display: flex; justify-content: center; gap: 0.8em;">
-                        <div style="background: rgba(212,175,55,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--gold); flex: 1; max-width: 200px;">
+                    <!-- Bottom Row: Storage + Operations + Analytics -->
+                    <div style="display: flex; justify-content: center; gap: 0.6em; flex-wrap: wrap;">
+                        <div style="background: rgba(212,175,55,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--gold); flex: 1; min-width: 180px;">
                             <strong>💾 STORAGE</strong>
                             <div style="display: flex; gap: 0.3em; margin-top: 0.3em;">
                                 <div style="background: white; padding: 0.3em; border-radius: 2px; flex: 1; text-align: center;">
@@ -1053,8 +994,15 @@
                                 </div>
                             </div>
                         </div>
-                        
-                        <div style="background: rgba(32,178,170,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--nf-teal); flex: 1; max-width: 280px;">
+
+                        <div style="background: rgba(155,89,182,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid #9B59B6; flex: 1; min-width: 120px;">
+                            <strong>📊 ANALYTICS</strong><br>
+                            <div style="font-size: 1.2em; margin-top: 0.2em;">📈</div>
+                            <strong>QuickSight</strong><br>
+                            <span class="tiny">BI & Dashboards</span>
+                        </div>
+
+                        <div style="background: rgba(32,178,170,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--nf-teal); flex: 1; min-width: 200px;">
                             <strong>📈 ORCHESTRATION & MONITORING</strong>
                             <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.2em; margin-top: 0.3em;">
                                 <div style="background: white; padding: 0.25em; border-radius: 2px; text-align: center; font-size: 0.9em;">
@@ -1071,8 +1019,8 @@
                                 </div>
                             </div>
                         </div>
-                        
-                        <div style="background: rgba(231,76,60,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--alert-red); text-align: center;">
+
+                        <div style="background: rgba(231,76,60,0.1); padding: 0.5em; border-radius: 4px; border: 2px solid var(--alert-red); flex: 1; min-width: 110px;">
                             <strong>📧 ALERTS</strong><br>
                             <div style="font-size: 1.2em; margin-top: 0.2em;">🔔</div>
                             <span class="tiny">SNS → Email</span><br>
@@ -1085,11 +1033,87 @@
                     <li><span class="icon">✓</span><strong>VPC:</strong> 2 Availability Zones with private subnets</li>
                     <li><span class="icon">✓</span><strong>NAT:</strong> Single NAT Gateway (cost-optimized)</li>
                     <li><span class="icon">✓</span><strong>Security:</strong> IAM auth throughout all services</li>
+                    <li><span class="icon">✓</span><strong>Analytics:</strong> QuickSight for BI dashboards and insights</li>
                 </ul>
                 
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
                     <span>Architecture — Container Detail</span>
+                </div>
+            </section>
+            
+            <!-- ==================== SLIDE 5: Technology Decisions ==================== -->
+            <section>
+                <h2>Technology Decisions</h2>
+                
+                <table class="data-table" style="font-size: 0.65em;">
+                    <tr>
+                        <th style="width: 13%;">Component</th>
+                        <th style="width: 20%;">Choice</th>
+                        <th style="width: 35%;">Rationale</th>
+                        <th style="width: 32%;">Alternative</th>
+                    </tr>
+                    <tr>
+                        <td><strong>Queue</strong></td>
+                        <td>MSK (Kafka 3.9.x + KRaft)</td>
+                        <td>No Zookeeper • IAM auth • DLQ support</td>
+                        <td>MSK Serverless, Kinesis</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Producer</strong></td>
+                        <td>ECS Fargate (0.25 vCPU)</td>
+                        <td>Long-running SSE • Auto-restart • Pay-per-second</td>
+                        <td>Lambda (15-min timeout)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Processing</strong></td>
+                        <td>EMR Serverless (Spark 3.5)</td>
+                        <td><span class="highlight-green">Zero idle cost</span> • MERGE upserts • emr-7.12.0</td>
+                        <td>EMR on EC2 (always-on)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Storage</strong></td>
+                        <td>S3 Tables (Iceberg 1.10.0)</td>
+                        <td>ACID • Time-travel • Auto-compaction</td>
+                        <td>Plain S3 + Parquet</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Orchestration</strong></td>
+                        <td>Step Functions (self-loop)</td>
+                        <td><span class="highlight-green">90% cheaper than MWAA</span> • Serverless</td>
+                        <td>MWAA/Airflow ($250+/mo)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Data Quality</strong></td>
+                        <td>Deequ 2.0.7 + DQ Gates</td>
+                        <td>Blocks downstream on failure • Audit trail</td>
+                        <td>Great Expectations</td>
+                    </tr>
+                    <tr>
+                        <td><strong>IaC</strong></td>
+                        <td>Terraform 1.6+</td>
+                        <td>Full AWS coverage • State management (S3, DynamoDB)</td>
+                        <td>CloudFormation</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Analytics</strong></td>
+                        <td>Amazon QuickSight</td>
+                        <td>Native AWS integration • Direct S3 Tables access • Serverless BI dashboards</td>
+                        <td>Metabase, Grafana + ClickHouse</td>
+                    </tr>
+                </table>
+                
+                <ul class="key-points" style="list-style: none; padding: 0; margin-bottom: 0.5em;">
+                    <li><span class="icon">✓</span><strong>Serverless-first:</strong> Zero idle cost for batch processing</li>
+                    <li><span class="icon">✓</span><strong>Pay-per-use:</strong> Only pay during job execution</li>
+                    <li><span class="icon">✓</span><strong>Fail-fast:</strong> DQ gates block downstream on failure</li>
+                    <li><span class="icon">✓</span><strong>Self-healing:</strong> Lambda auto-restart on health check failure</li>
+                    <li><span class="icon">✓</span><strong>Audit trail:</strong> Evidence-rich DQ logging for compliance</li>
+                </ul>
+                
+                <div class="slide-footer">
+                    <span class="brand">WikiStream</span>
+                    <span>Technology Stack</span>
                 </div>
             </section>
             
@@ -1234,13 +1258,9 @@
                                 <!-- Arrow -->
                                 <div style="text-align: center; color: var(--dq-green); font-size: 0.9em;">↓ Pass</div>
                                 <div></div>
-                                
-                                <!-- Row 6: Wait & Loop -->
-                                <div style="display: flex; gap: 0.3em; align-items: center;">
-                                    <div style="background: var(--nf-teal); color: white; padding: 0.25em 0.4em; border-radius: 3px; text-align: center; font-size: 0.85em;">
-                                        ⏱️ Wait 10m
-                                    </div>
-                                    <span style="font-size: 0.8em;">→</span>
+
+                                <!-- Row 6: Loop -->
+                                <div style="display: flex; gap: 0.3em; align-items: center; justify-content: center;">
                                     <div style="background: var(--info-blue); color: white; padding: 0.25em 0.4em; border-radius: 3px; text-align: center; font-size: 0.85em;">
                                         🔄 Loop
                                     </div>
@@ -1260,267 +1280,8 @@
                     <span>Data Pipeline Flow</span>
                 </div>
             </section>
-            
-            <!-- ==================== SLIDE 7: Processing Deep Dive ==================== -->
-            <section>
-                <h2>Processing: EMR Serverless Deep Dive</h2>
-                <p style="font-size: 0.7em; color: var(--nf-medium-gray); margin-bottom: 0.4em;">Spark 3.5 on emr-7.12.0 — Iceberg 1.10.0 integration with S3 Tables</p>
-                
-                <!-- Three Job Cards - Spacious Layout -->
-                <div class="three-col" style="font-size: 0.75em; gap: 0.8em; flex: 1;">
-                    
-                    <!-- Bronze Streaming -->
-                    <div style="background: linear-gradient(135deg, rgba(205,127,50,0.12), rgba(205,127,50,0.03)); padding: 0.6em; border-radius: 5px; border-left: 4px solid var(--bronze); display: flex; flex-direction: column;">
-                        <h3 style="color: var(--bronze); margin: 0 0 0.4em 0; font-size: 1.05em;">🥉 Bronze Streaming</h3>
-                        <code style="font-size: 0.8em; margin-bottom: 0.4em;">bronze_streaming_job.py</code>
-                        
-                        <table class="data-table" style="font-size: 0.95em; margin-bottom: 0.5em;">
-                            <tr><td><strong>Type</strong></td><td>Structured Streaming</td></tr>
-                            <tr><td><strong>Trigger</strong></td><td>3-min micro-batches</td></tr>
-                            <tr><td><strong>Watermark</strong></td><td>10 min (late data)</td></tr>
-                            <tr><td><strong>Write</strong></td><td>MERGE INTO (upsert)</td></tr>
-                            <tr><td><strong>Resources</strong></td><td>4 vCPU continuous</td></tr>
-                        </table>
-                        
-                        <div style="font-size: 0.9em; margin-top: auto;">
-                            <strong>Key Operations:</strong>
-                            <ul style="margin: 0.2em 0 0 1em; padding: 0; line-height: 1.4;">
-                                <li>Deterministic event_id</li>
-                                <li>Kafka offset tracking</li>
-                                <li>Checkpoint management</li>
-                            </ul>
-                        </div>
-                    </div>
-                    
-                    <!-- Silver Batch -->
-                    <div style="background: linear-gradient(135deg, rgba(142,142,142,0.12), rgba(142,142,142,0.03)); padding: 0.6em; border-radius: 5px; border-left: 4px solid var(--silver); display: flex; flex-direction: column;">
-                        <h3 style="color: var(--silver); margin: 0 0 0.4em 0; font-size: 1.05em;">🥈 Silver Batch</h3>
-                        <code style="font-size: 0.8em; margin-bottom: 0.4em;">silver_batch_job.py</code>
-                        
-                        <table class="data-table" style="font-size: 0.95em; margin-bottom: 0.5em;">
-                            <tr><td><strong>Type</strong></td><td>Batch (Step Func)</td></tr>
-                            <tr><td><strong>Timeout</strong></td><td>900s (15 min)</td></tr>
-                            <tr><td><strong>Input</strong></td><td>bronze.raw_events</td></tr>
-                            <tr><td><strong>Output</strong></td><td>silver.cleaned_events</td></tr>
-                            <tr><td><strong>Resources</strong></td><td>4 vCPU on-demand</td></tr>
-                        </table>
-                        
-                        <div style="font-size: 0.9em; margin-top: auto;">
-                            <strong>Transformations:</strong>
-                            <ul style="margin: 0.2em 0 0 1em; padding: 0; line-height: 1.4;">
-                                <li>Deduplication by event_id</li>
-                                <li>Region mapping</li>
-                                <li>Anonymity detection</li>
-                            </ul>
-                        </div>
-                    </div>
-                    
-                    <!-- Gold Batch -->
-                    <div style="background: linear-gradient(135deg, rgba(212,175,55,0.12), rgba(212,175,55,0.03)); padding: 0.6em; border-radius: 5px; border-left: 4px solid var(--gold); display: flex; flex-direction: column;">
-                        <h3 style="color: var(--gold); margin: 0 0 0.4em 0; font-size: 1.05em;">🥇 Gold Batch</h3>
-                        <code style="font-size: 0.8em; margin-bottom: 0.4em;">gold_batch_job.py</code>
-                        
-                        <table class="data-table" style="font-size: 0.95em; margin-bottom: 0.5em;">
-                            <tr><td><strong>Type</strong></td><td>Batch (Step Func)</td></tr>
-                            <tr><td><strong>Timeout</strong></td><td>900s (15 min)</td></tr>
-                            <tr><td><strong>Input</strong></td><td>silver.cleaned_events</td></tr>
-                            <tr><td><strong>Output</strong></td><td>3 Gold tables</td></tr>
-                            <tr><td><strong>Resources</strong></td><td>4 vCPU on-demand</td></tr>
-                        </table>
-                        
-                        <div style="font-size: 0.9em; margin-top: auto;">
-                            <strong>Aggregations:</strong>
-                            <ul style="margin: 0.2em 0 0 1em; padding: 0; line-height: 1.4;">
-                                <li>hourly_stats by domain</li>
-                                <li>risk_scores by user</li>
-                                <li>daily_analytics_summary</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Bottom Config Tables - More Spacious -->
-                <div class="two-col" style="margin-top: 0.6em; font-size: 0.75em; gap: 1em;">
-                    <div style="background: var(--nf-light-gray); padding: 0.5em; border-radius: 4px;">
-                        <h3 style="margin: 0 0 0.3em 0; font-size: 1em;">🧊 Iceberg Configuration</h3>
-                        <table class="data-table" style="font-size: 0.95em;">
-                            <tr><td><strong>Format</strong></td><td>Version 2 (merge-on-read)</td></tr>
-                            <tr><td><strong>Compression</strong></td><td>ZSTD</td></tr>
-                            <tr><td><strong>File Size</strong></td><td>512 MB (compaction target)</td></tr>
-                            <tr><td><strong>Snapshots</strong></td><td>48 hours retention</td></tr>
-                        </table>
-                    </div>
-                    
-                    <div style="background: var(--nf-light-gray); padding: 0.5em; border-radius: 4px;">
-                        <h3 style="margin: 0 0 0.3em 0; font-size: 1em;">⚡ EMR Serverless Config</h3>
-                        <table class="data-table" style="font-size: 0.95em;">
-                            <tr><td><strong>Release</strong></td><td>emr-7.12.0 (Spark 3.5)</td></tr>
-                            <tr><td><strong>Quota</strong></td><td>16 vCPU total</td></tr>
-                            <tr><td><strong>Max Concurrent</strong></td><td>8 vCPU (Bronze + batch)</td></tr>
-                            <tr><td><strong>Auto-stop</strong></td><td>5 min idle timeout</td></tr>
-                        </table>
-                    </div>
-                </div>
-                
-                <div class="slide-footer">
-                    <span class="brand">WikiStream</span>
-                    <span>Processing Deep Dive</span>
-                </div>
-            </section>
-            
-            <!-- ==================== SLIDE 8: Data Quality Gates ==================== -->
-            <section>
-                <h2>Data Quality Gates</h2>
-                <p class="tiny">AWS Deequ 2.0.7 — Gates block downstream processing on failure</p>
-                
-                <div class="dq-flow" style="margin-bottom: 0.4em;">
-                    <div class="dq-step" style="background: var(--bronze); color: white;">Bronze</div>
-                    <span>→</span>
-                    <div class="dq-step gate">🔍 DQ</div>
-                    <span>→</span>
-                    <div class="dq-step" style="background: var(--silver); color: white;">Silver</div>
-                    <span>→</span>
-                    <div class="dq-step gate">🔍 DQ</div>
-                    <span>→</span>
-                    <div class="dq-step" style="background: var(--gold); color: white;">Gold</div>
-                    <span>→</span>
-                    <div class="dq-step gate">🔍 DQ</div>
-                    <span>→</span>
-                    <div class="dq-step" style="background: var(--dq-green); color: white;">✓</div>
-                </div>
-                
-                <table class="data-table" style="font-size: 0.6em;">
-                    <tr>
-                        <th style="width: 9%;">Gate</th>
-                        <th style="width: 14%;">Check</th>
-                        <th style="width: 45%;">Rule</th>
-                        <th style="width: 12%;">Threshold</th>
-                        <th style="width: 10%;">Block</th>
-                    </tr>
-                    <tr>
-                        <td rowspan="4" style="background: rgba(205,127,50,0.12); font-weight: 700;">Bronze</td>
-                        <td>Completeness</td>
-                        <td><code>event_id, domain, event_timestamp</code> non-null</td>
-                        <td>100%</td>
-                        <td style="color: var(--alert-red);">✓</td>
-                    </tr>
-                    <tr>
-                        <td>Completeness</td>
-                        <td><code>title, user, wiki</code> non-null</td>
-                        <td>≥95%</td>
-                        <td style="color: var(--gold);">⚠</td>
-                    </tr>
-                    <tr>
-                        <td>Timeliness</td>
-                        <td>95th percentile event latency</td>
-                        <td>≤60 sec</td>
-                        <td style="color: var(--alert-red);">✓</td>
-                    </tr>
-                    <tr>
-                        <td>Validity</td>
-                        <td><code>event_type</code> in allowed set, <code>namespace ≥ 0</code></td>
-                        <td>100%</td>
-                        <td style="color: var(--alert-red);">✓</td>
-                    </tr>
-                    <tr>
-                        <td rowspan="2" style="background: rgba(142,142,142,0.12); font-weight: 700;">Silver</td>
-                        <td>Accuracy</td>
-                        <td><code>length_delta = length_new - length_old</code></td>
-                        <td>99%</td>
-                        <td style="color: var(--alert-red);">✓</td>
-                    </tr>
-                    <tr>
-                        <td>Consistency</td>
-                        <td><code>is_valid = true</code> for all Silver records</td>
-                        <td>100%</td>
-                        <td style="color: var(--alert-red);">✓</td>
-                    </tr>
-                    <tr>
-                        <td rowspan="2" style="background: rgba(212,175,55,0.12); font-weight: 700;">Gold</td>
-                        <td>Upstream</td>
-                        <td>Bronze DQ + Silver DQ gates must have passed</td>
-                        <td>Pass</td>
-                        <td style="color: var(--alert-red);">✓</td>
-                    </tr>
-                    <tr>
-                        <td>Validity</td>
-                        <td><code>bot_percentage</code> in 0-100 range, <code>risk_score</code> in 0.0-1.0 range</td>
-                        <td>100%</td>
-                        <td style="color: var(--alert-red);">✓</td>
-                    </tr>
-                </table>
-                
-                <ul class="key-points" style="list-style: none; padding: 0; margin-top: 0.4em;">
-                    <li><span class="icon">✓</span><strong>Audit Trail:</strong> All DQ results logged to <code>dq_audit.quality_results</code></li>
-                    <li><span class="icon">✓</span><strong>Evidence:</strong> Full JSON evidence stored for each check</li>
-                    <li><span class="icon">✓</span><strong>Trend Analysis:</strong> Historical data enables drift detection</li>
-                </ul>
-                
-                <div class="slide-footer">
-                    <span class="brand">WikiStream</span>
-                    <span>Data Quality Gates</span>
-                </div>
-            </section>
-            
-            <!-- ==================== SLIDE 7: Step Functions Pipeline ==================== -->
-            <section>
-                <h2>Step Functions: Batch Pipeline</h2>
-                <p style="font-size: 0.7em; color: var(--nf-medium-gray); margin-bottom: 0.4em;">Orchestrates batch processing with DQ gates comprising Medallion architecture — <b>self-loops</b> every 10 minutes after successful completion</p>
-                
-                <div class="two-col">
-                    <div>
-                        <h3>State Machine Flow</h3>
-                        <div class="sfn-flow">
-                            <div class="sfn-step start">▶ RecordPipelineStart</div>
-                            <div class="sfn-arrow">↓</div>
-                            <div class="sfn-step bronze">🔍 BronzeDQGate (EMR)</div>
-                            <div class="sfn-arrow">↓ Pass</div>
-                            <div class="sfn-step silver">⚙️ SilverJob (EMR)</div>
-                            <div class="sfn-arrow">↓</div>
-                            <div class="sfn-step dq">🔍 SilverDQGate (EMR)</div>
-                            <div class="sfn-arrow">↓ Pass</div>
-                            <div class="sfn-step gold">⚙️ GoldJob (EMR)</div>
-                            <div class="sfn-arrow">↓</div>
-                            <div class="sfn-step dq">🔍 GoldDQGate (EMR)</div>
-                            <div class="sfn-arrow">↓ All Pass</div>
-                            <div class="sfn-step wait">⏱️ Wait 10 min</div>
-                            <div class="sfn-arrow">↓</div>
-                            <div class="sfn-step start">🔄 TriggerNextCycle</div>
-                        </div>
-                        <p class="tiny" style="text-align: center; margin-top: 0.2em;">
-                            ❌ Failure → <span style="color: var(--alert-red);">SNS Alert → Stop</span>
-                        </p>
-                    </div>
-                    
-                    <div>
-                        <h3>Pipeline Timing</h3>
-                        <table class="data-table">
-                            <tr><th>Phase</th><th>Duration</th></tr>
-                            <tr><td>Initial wait (Bronze data)</td><td>15 min</td></tr>
-                            <tr><td>EMR cold start (JARs)</td><td>~5-8 min</td></tr>
-                            <tr><td>DQ/batch per job</td><td>~2-3 min</td></tr>
-                            <tr><td>Full pipeline</td><td>~15-25 min</td></tr>
-                            <tr><td>Wait between cycles</td><td>10 min</td></tr>
-                            <tr style="background: rgba(232,90,35,0.08);"><td><strong>Total cycle</strong></td><td><strong>~25-35 min</strong></td></tr>
-                        </table>
-                        
-                        
-                        <h3 style="margin-top: 0.4em;">Resource (16 vCPU quota)</h3>
-                        <table class="data-table resource-table">
-                            <tr><td>Bronze Streaming</td><td>4 vCPU (continuous)</td></tr>
-                            <tr><td>Batch Jobs (each)</td><td>4 vCPU (sequential)</td></tr>
-                            <tr><td>Max concurrent</td><td>8 vCPU</td></tr>
-                        </table>
-                    </div>
-                </div>
-                
-                <div class="slide-footer">
-                    <span class="brand">WikiStream</span>
-                    <span>Step Functions Pipeline</span>
-                </div>
-            </section>
-            
-            <!-- ==================== SLIDE 8: Infrastructure Lifecycle ==================== -->
+
+            <!-- ==================== SLIDE 7: Infrastructure Lifecycle ==================== -->
             <section>
                 <h2>Infrastructure Lifecycle</h2>
                 <p class="tiny">Terraform IaC with idempotent create/destroy scripts for ease of implementation during development - <b>saving AWS bill</b> from running resources continuously</p>
@@ -1582,7 +1343,7 @@
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 9: Data Model ==================== -->
+            <!-- ==================== SLIDE 8: Data Model ==================== -->
             <section>
                 <h2>Data Model: Medallion Layers</h2>
                 <p class="tiny">S3 Tables with Apache Iceberg 1.10.0 — Format Version 2</p>
@@ -1690,130 +1451,180 @@
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 10: Technology Decisions ==================== -->
+            <!-- ==================== SLIDE 9: Data Quality Gates ==================== -->
             <section>
-                <h2>Technology Decisions</h2>
+                <h2>Data Quality Gates</h2>
+                <p class="tiny">AWS Deequ 2.0.7 — Gates block downstream processing on failure</p>
                 
-                <table class="data-table" style="font-size: 0.65em;">
+                <div class="dq-flow" style="margin-bottom: 0.4em;">
+                    <div class="dq-step" style="background: var(--bronze); color: white;">Bronze</div>
+                    <span>→</span>
+                    <div class="dq-step gate">🔍 DQ</div>
+                    <span>→</span>
+                    <div class="dq-step" style="background: var(--silver); color: white;">Silver</div>
+                    <span>→</span>
+                    <div class="dq-step gate">🔍 DQ</div>
+                    <span>→</span>
+                    <div class="dq-step" style="background: var(--gold); color: white;">Gold</div>
+                    <span>→</span>
+                    <div class="dq-step gate">🔍 DQ</div>
+                    <span>→</span>
+                    <div class="dq-step" style="background: var(--dq-green); color: white;">✓</div>
+                </div>
+                
+                <table class="data-table" style="font-size: 0.6em;">
                     <tr>
-                        <th style="width: 13%;">Component</th>
-                        <th style="width: 20%;">Choice</th>
-                        <th style="width: 35%;">Rationale</th>
-                        <th style="width: 32%;">Alternative</th>
+                        <th style="width: 9%;">Gate</th>
+                        <th style="width: 14%;">Check</th>
+                        <th style="width: 45%;">Rule</th>
+                        <th style="width: 12%;">Threshold</th>
+                        <th style="width: 10%;">Block</th>
                     </tr>
                     <tr>
-                        <td><strong>Queue</strong></td>
-                        <td>MSK (Kafka 3.9.x + KRaft)</td>
-                        <td>No Zookeeper • IAM auth • DLQ support</td>
-                        <td>MSK Serverless, Kinesis</td>
+                        <td rowspan="6" style="background: rgba(205,127,50,0.12); font-weight: 700;">Bronze</td>
+                        <td>Completeness</td>
+                        <td><code>event_id, event_type, domain, event_timestamp</code> non-null</td>
+                        <td>100%</td>
+                        <td style="color: var(--alert-red);">✓</td>
                     </tr>
                     <tr>
-                        <td><strong>Producer</strong></td>
-                        <td>ECS Fargate (0.25 vCPU)</td>
-                        <td>Long-running SSE • Auto-restart • Pay-per-second</td>
-                        <td>Lambda (15-min timeout)</td>
+                        <td>Completeness</td>
+                        <td><code>title, user, wiki</code> non-null</td>
+                        <td>≥95%</td>
+                        <td style="color: var(--gold);">⚠</td>
                     </tr>
                     <tr>
-                        <td><strong>Processing</strong></td>
-                        <td>EMR Serverless (Spark 3.5)</td>
-                        <td><span class="highlight-green">Zero idle cost</span> • MERGE upserts • emr-7.12.0</td>
-                        <td>EMR on EC2 (always-on)</td>
+                        <td>Timeliness</td>
+                        <td>95th percentile event latency</td>
+                        <td>≤180 sec (3 min)</td>
+                        <td style="color: var(--gold);">⚠</td>
                     </tr>
                     <tr>
-                        <td><strong>Storage</strong></td>
-                        <td>S3 Tables (Iceberg 1.10.0)</td>
-                        <td>ACID • Time-travel • Auto-compaction</td>
-                        <td>Plain S3 + Parquet</td>
+                        <td>Validity</td>
+                        <td><code>event_type</code> in allowed set</td>
+                        <td>100%</td>
+                        <td style="color: var(--alert-red);">✓</td>
                     </tr>
                     <tr>
-                        <td><strong>Orchestration</strong></td>
-                        <td>Step Functions (self-loop)</td>
-                        <td><span class="highlight-green">90% cheaper than MWAA</span> • Serverless</td>
-                        <td>MWAA/Airflow ($250+/mo)</td>
+                        <td>Validity</td>
+                        <td><code>event_hour</code> in range 0-23, <code>event_hour ≥ 0</code></td>
+                        <td>100%</td>
+                        <td style="color: var(--alert-red);">✓</td>
                     </tr>
                     <tr>
-                        <td><strong>Data Quality</strong></td>
-                        <td>Deequ 2.0.7 + DQ Gates</td>
-                        <td>Blocks downstream on failure • Audit trail</td>
-                        <td>Great Expectations</td>
+                        <td>Uniqueness</td>
+                        <td><code>event_id</code> within batch (Wikipedia SSE can send duplicates)</td>
+                        <td>≥95%</td>
+                        <td style="color: var(--alert-red);">✓</td>
                     </tr>
                     <tr>
-                        <td><strong>IaC</strong></td>
-                        <td>Terraform 1.6+</td>
-                        <td>Full AWS coverage • State management (S3, DynamoDB)</td>
-                        <td>CloudFormation</td>
+                        <td rowspan="4" style="background: rgba(142,142,142,0.12); font-weight: 700;">Silver</td>
+                        <td>Completeness</td>
+                        <td><code>event_id, domain, region, event_timestamp</code> non-null</td>
+                        <td>100%</td>
+                        <td style="color: var(--alert-red);">✓</td>
+                    </tr>
+                    <tr>
+                        <td>Validity</td>
+                        <td><code>region</code> in allowed set (asia_pacific, europe, americas, middle_east, other)</td>
+                        <td>100%</td>
+                        <td style="color: var(--alert-red);">✓</td>
+                    </tr>
+                    <tr>
+                        <td>Uniqueness</td>
+                        <td><code>event_id</code> unique (after deduplication)</td>
+                        <td>100%</td>
+                        <td style="color: var(--alert-red);">✓</td>
+                    </tr>
+                    <tr>
+                        <td>Accuracy</td>
+                        <td><code>length_delta = length_new - length_old</code>, <code>is_anonymous</code> from IP pattern, <code>region</code> mapping</td>
+                        <td>99-100%</td>
+                        <td style="color: var(--alert-red);">✓</td>
+                    </tr>
+                    <tr>
+                        <td rowspan="2" style="background: rgba(212,175,55,0.12); font-weight: 700;">Gold</td>
+                        <td>Upstream</td>
+                        <td>Bronze DQ + Silver DQ gates must have passed</td>
+                        <td>Pass</td>
+                        <td style="color: var(--alert-red);">✓</td>
+                    </tr>
+                    <tr>
+                        <td>Validity</td>
+                        <td><code>bot_percentage</code> in 0-100 range, <code>risk_score</code> in 0.0-1.0 range</td>
+                        <td>100%</td>
+                        <td style="color: var(--alert-red);">✓</td>
                     </tr>
                 </table>
                 
-                <ul class="key-points" style="list-style: none; padding: 0; margin-bottom: 0.5em;">
-                    <li><span class="icon">✓</span><strong>Serverless-first:</strong> Zero idle cost for batch processing</li>
-                    <li><span class="icon">✓</span><strong>Pay-per-use:</strong> Only pay during job execution</li>
-                    <li><span class="icon">✓</span><strong>Fail-fast:</strong> DQ gates block downstream on failure</li>
-                    <li><span class="icon">✓</span><strong>Self-healing:</strong> Lambda auto-restart on health check failure</li>
-                    <li><span class="icon">✓</span><strong>Audit trail:</strong> Evidence-rich DQ logging for compliance</li>
+                <ul class="key-points" style="list-style: none; padding: 0; margin-top: 0.4em;">
+                    <li><span class="icon">✓</span><strong>Audit Trail:</strong> All DQ results logged to <code>dq_audit.quality_results</code></li>
+                    <li><span class="icon">✓</span><strong>Evidence:</strong> Full JSON evidence stored for each check</li>
+                    <li><span class="icon">✓</span><strong>Trend Analysis:</strong> Historical data enables drift detection</li>
                 </ul>
                 
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
-                    <span>Technology Stack</span>
+                    <span>Data Quality Gates</span>
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 11: Cost Analysis ==================== -->
+            <!-- ==================== SLIDE 10: Step Functions Pipeline ==================== -->
             <section>
-                <h2>Cost Analysis & Optimization*</h2>
+                <h2>Step Functions: Batch Pipeline</h2>
+                <p style="font-size: 0.7em; color: var(--nf-medium-gray); margin-bottom: 0.4em;">Orchestrates batch processing with DQ gates comprising Medallion architecture — <b>self-loops</b> continuously after successful completion</p>
                 
                 <div class="two-col">
                     <div>
-                        <h3>💰 Monthly Cost (24/7)</h3>
-                        <table class="data-table" style="font-size: 0.65em;">
-                            <tr><th>Service</th><th>Configuration</th><th style="text-align: right;">Est.</th></tr>
-                            <tr><td>MSK</td><td>2× kafka.t3.small, 50GB</td><td style="text-align: right;">$90</td></tr>
-                            <tr><td>EMR (Bronze)</td><td>Streaming, pre-warmed</td><td style="text-align: right;">$100</td></tr>
-                            <tr><td>EMR (Batch)</td><td>Silver/Gold DQ jobs</td><td style="text-align: right;">$15</td></tr>
-                            <tr><td>NAT Gateway</td><td>Single AZ (cost save)</td><td style="text-align: right;">$35</td></tr>
-                            <tr><td>ECS Fargate</td><td>0.25 vCPU, 0.5GB</td><td style="text-align: right;">$10</td></tr>
-                            <tr><td>S3 + S3 Tables</td><td>~10 GB storage</td><td style="text-align: right;">$3</td></tr>
-                            <tr><td>Other</td><td>CloudWatch, SNS, Lambda</td><td style="text-align: right;">$7</td></tr>
-                            <tr style="background: rgba(39,174,96,0.1); font-weight: 700;">
-                                <td colspan="2"><strong>Total</strong></td>
-                                <td style="text-align: right;"><strong>~$260/mo</strong></td>
-                            </tr>
-                        </table>
-                        <p class="tiny">* us-east-1 pricing</p>
+                        <h3>State Machine Flow</h3>
+                        <div class="sfn-flow">
+                            <div class="sfn-step start">▶ RecordPipelineStart</div>
+                            <div class="sfn-arrow">↓</div>
+                            <div class="sfn-step bronze">🔍 BronzeDQGate (EMR)</div>
+                            <div class="sfn-arrow">↓ Pass</div>
+                            <div class="sfn-step silver">⚙️ SilverJob (EMR)</div>
+                            <div class="sfn-arrow">↓</div>
+                            <div class="sfn-step dq">🔍 SilverDQGate (EMR)</div>
+                            <div class="sfn-arrow">↓ Pass</div>
+                            <div class="sfn-step gold">⚙️ GoldJob (EMR)</div>
+                            <div class="sfn-arrow">↓</div>
+                            <div class="sfn-step dq">🔍 GoldDQGate (EMR)</div>
+                            <div class="sfn-arrow">↓ All Pass</div>
+                            <div class="sfn-step start">🔄 TriggerNextCycle</div>
+                        </div>
+                        <p class="tiny" style="text-align: center; margin-top: 0.2em;">
+                            ❌ Failure → <span style="color: var(--alert-red);">SNS Alert → Stop</span>
+                        </p>
                     </div>
                     
                     <div>
-                        <h3>📈 Cost Savings</h3>
-                        <div class="cost-highlight">
-                            <div style="font-size: 1em; font-weight: 600; color: var(--dq-green);">~$400/mo saved</div>
-                            <div class="tiny">vs traditional architecture</div>
-                        </div>
-                        
-                        <table class="data-table" style="font-size: 0.65em; margin-top: 0.3em;">
-                            <tr><th>Decision</th><th>Savings</th></tr>
-                            <tr><td>Step Functions vs MWAA</td><td>~$250/mo</td></tr>
-                            <tr><td>EMR Serverless vs EC2</td><td>~$150/mo</td></tr>
-                            <tr><td>Single NAT vs Multi-AZ</td><td>~$35/mo</td></tr>
+                        <h3>Pipeline Timing</h3>
+                        <table class="data-table">
+                            <tr><th>Phase</th><th>Duration</th></tr>
+                            <tr><td>Initial wait (Bronze data)</td><td>15 min</td></tr>
+                            <tr><td>EMR cold start (JARs)</td><td>~5-8 min</td></tr>
+                            <tr><td>DQ/batch per job</td><td>~2-3 min</td></tr>
+                            <tr><td>Full pipeline</td><td>~15-25 min</td></tr>
+                            <tr style="background: rgba(232,90,35,0.08);"><td><strong>Total cycle</strong></td><td><strong>~15-25 min</strong></td></tr>
                         </table>
                         
-                        <h3 style="margin-top: 0.5em;">Dev Cost Control</h3>
-                        <div class="code-block">
-# End of day
-./scripts/destroy_all.sh
-
-# Start of day (~25 min)
-./scripts/create_infra.sh</div>
+                        
+                        <h3 style="margin-top: 0.4em;">Resource (16 vCPU quota)</h3>
+                        <table class="data-table resource-table">
+                            <tr><td>Bronze Streaming</td><td>4 vCPU (continuous)</td></tr>
+                            <tr><td>Batch Jobs (each)</td><td>4 vCPU (sequential)</td></tr>
+                            <tr><td>Max concurrent</td><td>8 vCPU</td></tr>
+                        </table>
                     </div>
                 </div>
                 
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
-                    <span>Economics</span>
+                    <span>Step Functions Pipeline</span>
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 12: Results & Deliverables ==================== -->
+            <!-- ==================== SLIDE 11: Results & Deliverables ==================== -->
             <section>
                 <h2>Outcomes & Deliverables</h2>
                 
@@ -1825,10 +1636,11 @@
                             <li><strong>Medallion Architecture:</strong> Bronze/Silver/Gold + Audit</li>
                             <li><strong>Idempotent:</strong> MERGE INTO with deterministic ID</li>
                             <li><strong>DQ Gates:</strong> Block downstream on failure</li>
-                            <li><strong>Self-Looping Pipeline:</strong> 10-min cycle intervals</li>
+                            <li><strong>Self-Looping Pipeline:</strong> Continuous processing</li>
                             <li><strong>Auto-Recovery:</strong> Lambda restarts Bronze</li>
                             <li><strong>Observability:</strong> CloudWatch + SNS alerts</li>
                             <li><strong>IaC:</strong> Full Terraform (~2600 lines)</li>
+                            <li><strong>Analytics:</strong> QuickSight dashboards for insights</li>
                 </ul>
                     </div>
                     
@@ -1846,10 +1658,6 @@
                             <div class="stat-box" style="flex: 1; min-width: 80px;">
                                 <span class="number">95%+</span>
                                 <span class="label">DQ Pass</span>
-                    </div>
-                            <div class="stat-box" style="flex: 1; min-width: 80px;">
-                                <span class="number">~$260</span>
-                                <span class="label">Monthly</span>
                     </div>
                         </div>
                         
@@ -1874,7 +1682,7 @@
                 </div>
             </section>
             
-            <!-- ==================== SLIDE: Thank You & Discussion ==================== -->
+            <!-- ==================== SLIDE 12: Thank You & Discussion ==================== -->
             <section>
                 <h2 style="text-align: center;">Thank You — Let's Discuss</h2>
                 <p class="tiny" style="text-align: center;">Topics for deeper technical conversation</p>
@@ -1889,12 +1697,12 @@
                         <h4>🔍 DQ Gates: Why Block Instead of Alert-Only?</h4>
                         <p>Fail-fast prevents cascading bad data to Gold. Better to stop and fix at source than propagate corruption. Audit trail enables root cause analysis.</p>
                 </div>
-                
+                    
                     <div class="discussion-item" style="border-left-color: var(--nf-teal);">
                         <h4>🔄 Self-Looping vs. EventBridge Schedule?</h4>
                         <p>Self-loop ensures previous cycle completes before next starts. Fixed schedules risk overlap or gaps. 10-min wait between cycles prevents resource contention.</p>
                 </div>
-                
+                    
                     <div class="discussion-item" style="border-left-color: var(--gold);">
                         <h4>💰 Serverless Cost vs. Provisioned?</h4>
                         <p>At ~$260/mo workload, serverless wins. Break-even around $500/mo continuous. EMR Serverless cold start (5-8 min) is acceptable for batch; 15-min timeout accounts for this.</p>
@@ -1919,7 +1727,7 @@
                     </div>
                     <div style="font-size: 0.65em; color: var(--nf-medium-gray); text-align: center;">
                         <strong style="color: var(--nf-charcoal);">Key Differentiators:</strong><br>
-                        Self-looping batch • Fail-fast DQ • Serverless-first • ~$260/mo
+                        Self-looping batch • Fail-fast DQ • Serverless-first • QuickSight Analytics
                     </div>
                 </div>
                 
