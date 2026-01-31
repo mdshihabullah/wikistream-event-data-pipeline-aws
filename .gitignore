@@ -274,6 +274,21 @@ secrets/
 *.rar
 !infrastructure/terraform/bronze_restart_lambda.zip
 
+# Allow images in docs folder (and subdirectories)
+!docs/**/*.jpg
+!docs/**/*.jpeg
+!docs/**/*.png
+!docs/**/*.gif
+!docs/**/*.svg
+!docs/**/*.bmp
+!docs/**/*.webp
+!docs/**/*.ico
+!docs/**/*.tiff
+!docs/**/*.tif
+
+# Allow PDFs in docs folder (and subdirectories)
+!docs/**/*.pdf
+
 # ============================================================================
 # DOCUMENTATION TEMP FILES
 # ============================================================================
