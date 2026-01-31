@@ -8,16 +8,17 @@
       "width": 4,
       "height": 4,
       "properties": {
-        "title": "Step Functions Today",
+        "title": "Batch Pipeline Executions (success/fail)",
         "region": "${region}",
         "view": "singleValue",
         "stacked": false,
-        "period": 86400,
+        "period": 300,
         "stat": "Sum",
         "metrics": [
-          ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#2ca02c", "label": "Success" }],
-          ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#d62728", "label": "Failed" }]
-        ]
+          ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${batch_pipeline_arn}", { "stat": "Sum", "label": "Success", "color": "#2ca02c" }],
+          ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${batch_pipeline_arn}", { "stat": "Sum", "label": "Fail", "color": "#d62728" }]
+        ],
+        "setPeriodToTimeRange": true
       }
     },
     {
@@ -27,7 +28,7 @@
       "width": 4,
       "height": 4,
       "properties": {
-        "title": "ECS Producer Status",
+        "title": "ECS Producer CPU/Memory (avg)",
         "region": "${region}",
         "view": "singleValue",
         "period": 60,
@@ -40,38 +41,19 @@
     },
     {
       "type": "metric",
-      "x": 8,
-      "y": 0,
-      "width": 4,
-      "height": 4,
-      "properties": {
-        "title": "DQ Gate Status",
-        "region": "${region}",
-        "view": "singleValue",
-        "period": 3600,
-        "stat": "Sum",
-        "metrics": [
-          ["WikiStream/DataQuality", "DQGateStatus", "Layer", "bronze", { "label": "Bronze", "color": "#17becf" }],
-          ["WikiStream/DataQuality", "DQGateStatus", "Layer", "silver", { "label": "Silver", "color": "#7f7f7f" }],
-          ["WikiStream/DataQuality", "DQGateStatus", "Layer", "gold", { "label": "Gold", "color": "#ffd700" }]
-        ]
-      }
-    },
-    {
-      "type": "metric",
       "x": 12,
       "y": 0,
       "width": 4,
       "height": 2,
       "properties": {
-        "title": "Kafka Throughput/sec",
+        "title": "Kafka Throughput (bytes/sec)",
         "region": "${region}",
         "view": "singleValue",
         "period": 60,
         "stat": "Average",
         "metrics": [
-          ["AWS/Kafka", "BytesInPerSec", "Cluster Name", "${msk_cluster_name}", { "label": "In (B/s)" }],
-          ["AWS/Kafka", "BytesOutPerSec", "Cluster Name", "${msk_cluster_name}", { "label": "Out (B/s)" }]
+          ["AWS/Kafka", "BytesInPerSec", "Cluster Name", "${msk_cluster_name}", { "label": "Bytes In/s" }],
+          ["AWS/Kafka", "BytesOutPerSec", "Cluster Name", "${msk_cluster_name}", { "label": "Bytes Out/s" }]
         ]
       }
     },
@@ -82,7 +64,7 @@
       "width": 4,
       "height": 2,
       "properties": {
-        "title": "DLQ Messages (Last Hour)",
+        "title": "Producer DLQ + Validation Errors (last hour)",
         "region": "${region}",
         "view": "singleValue",
         "period": 3600,
@@ -117,7 +99,7 @@
       "width": 12,
       "height": 5,
       "properties": {
-        "title": "Batch Pipeline Executions (1-min resolution)",
+        "title": "Batch Pipeline Executions (per minute)",
         "region": "${region}",
         "view": "timeSeries",
         "stacked": false,
@@ -139,7 +121,7 @@
       "width": 12,
       "height": 5,
       "properties": {
-        "title": "Pipeline Execution Duration",
+        "title": "Batch Pipeline Duration (avg ms)",
         "region": "${region}",
         "view": "timeSeries",
         "period": 60,
@@ -162,7 +144,7 @@
       "width": 8,
       "height": 5,
       "properties": {
-        "title": "Bronze Records Processed (Streaming)",
+        "title": "Bronze Throughput (records + batches)",
         "region": "${region}",
         "view": "timeSeries",
         "period": 60,
@@ -184,7 +166,7 @@
       "width": 8,
       "height": 5,
       "properties": {
-        "title": "Bronze Processing Latency",
+        "title": "Bronze Processing Latency (avg ms)",
         "region": "${region}",
         "view": "timeSeries",
         "period": 60,
@@ -207,7 +189,7 @@
       "width": 8,
       "height": 5,
       "properties": {
-        "title": "Producer Event Processing (Streaming)",
+        "title": "Producer Events (processed/filtered/DLQ/errors)",
         "region": "${region}",
         "view": "timeSeries",
         "period": 60,
@@ -228,7 +210,7 @@
       "width": 12,
       "height": 5,
       "properties": {
-        "title": "DQ Gate Pass/Fail + DLQ Monitoring",
+        "title": "DQ Gates (pass/fail) + Producer DLQ",
         "region": "${region}",
         "view": "timeSeries",
         "period": 300,
@@ -274,35 +256,8 @@
           ]
         }
       }
-    },
-    {
-      "type": "text",
-      "x": 0,
-      "y": 19,
-      "width": 12,
-      "height": 5,
-      "properties": {
-        "markdown": "## WikiStream Pipeline SLA Targets\n\n| Layer | Target Latency | Target Pass Rate | DLQ Threshold |\n|-------|----------------|------------------|---------------|\n| Producer | Real-time | N/A | <10 msgs/min |\n| Bronze (Streaming) | ≤3 min P95 | 99% | N/A |\n| Silver (Batch) | ≤2 min | 100% | N/A |\n| Gold (Batch) | ≤2 min | 100% | N/A |\n| **End-to-End** | **≤5 min** | **100%** | **<10/min** |\n\n**Architecture:** Wikipedia SSE → Producer → Kafka (raw-events + dlq-events) → Bronze → DQ → Silver → DQ → Gold → DQ\n\n**DLQ Monitoring:**\n- DLQ messages indicate malformed events from Wikipedia SSE\n- Current DLQ count: **0** (all events valid) ✅\n- Alert threshold: >10 DLQ messages/minute\n\n**Quick Links:**\n- [EMR Serverless](https://${region}.console.aws.amazon.com/emr/home?region=${region}#/serverless/applications/${emr_app_id})\n- [Step Functions](https://${region}.console.aws.amazon.com/states/home?region=${region}#/statemachines)\n- [S3 Tables](https://${region}.console.aws.amazon.com/s3tables/home?region=${region})\n- [CloudWatch Logs](https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#logsV2:log-groups/log-group/$252Faws$252Femr-serverless$252F${name_prefix})\n- [Producer Logs](https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#logsV2:log-groups/log-group/$252Fecs$252F${name_prefix}-producer)"
-      }
-    },
-    {
-      "type": "metric",
-      "x": 12,
-      "y": 19,
-      "width": 12,
-      "height": 5,
-      "properties": {
-        "title": "Pipeline Activity (Last 3 Hours)",
-        "region": "${region}",
-        "view": "bar",
-        "period": 300,
-        "stat": "Sum",
-        "metrics": [
-          ["AWS/States", "ExecutionsSucceeded", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#2ca02c", "label": "Success" }],
-          ["AWS/States", "ExecutionsFailed", "StateMachineArn", "${batch_pipeline_arn}", { "color": "#d62728", "label": "Failed" }]
-        ],
-        "yAxis": { "left": { "min": 0 } }
-      }
     }
   ]
 }
+
+

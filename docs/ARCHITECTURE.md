@@ -36,7 +36,7 @@ flowchart TB
 
     subgraph OPS["📈 ORCHESTRATION & MONITORING"]
         SFN["⚙️ Step Functions"]
-        EB["⏰ EventBridge<br/>5-min schedule"]
+        EB["⏰ EventBridge<br/>15-min initial"]
         CW["📊 CloudWatch"]
         LAMBDA["λ Auto-Restart"]
         SNS["📧 SNS Alerts"]
@@ -130,7 +130,7 @@ DQ checks are implemented using **AWS Deequ** (via PyDeequ 1.4.0 wrapper) for sc
 | Component | Technology | Configuration | Description |
 |-----------|------------|---------------|-------------|
 | **Batch Pipeline** | Step Functions | `wikistream-dev-batch-pipeline` | Bronze DQ → Silver → Silver DQ → Gold → Gold DQ |
-| **Scheduler** | EventBridge | Every 5 minutes (disabled by default) | Triggers batch pipeline |
+| **Scheduler** | EventBridge | 15-min initial delay (serverless) | One-time trigger, then self-loops |
 | **Auto-Recovery** | Lambda | Triggered by CloudWatch alarm | Restarts Bronze job on health check failure |
 | **Alerts** | SNS | Email subscription | DQ gate failures, pipeline failures |
 | **Dashboard** | CloudWatch | `wikistream-dev-pipeline-dashboard` | Pipeline metrics, DQ status, alarms |
@@ -229,7 +229,7 @@ flowchart BT
 5. **Auto-Recovery**: Lambda restarts Bronze job on health check failure
 6. **Monitoring**: CloudWatch metrics, alarms, and comprehensive dashboard for pipeline health
 7. **Storage**: All data in S3 Tables (Iceberg v2) with ZSTD compression and auto-compaction
-8. **Future**: QuickSight not yet implemented - designed for business intelligence dashboards
+8. **Analytics**: QuickSight is provisioned via Terraform with datasets for hourly_stats, risk_scores, daily_analytics_summary, and silver.cleaned_events
 
 ## 🔧 Technology Stack
 

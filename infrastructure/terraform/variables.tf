@@ -206,6 +206,87 @@ variable "emr_log_retention_days" {
 }
 
 # -----------------------------------------------------------------------------
+# QuickSight (Analytics) Configuration
+# -----------------------------------------------------------------------------
+
+variable "quicksight_enable_subscription" {
+  description = "Enable QuickSight account subscription creation"
+  type        = bool
+  default     = false
+}
+
+variable "quicksight_account_name" {
+  description = "QuickSight account name (subscription)"
+  type        = string
+  default     = "ne-shihab"
+}
+
+variable "quicksight_admin_email" {
+  description = "QuickSight admin email (subscription)"
+  type        = string
+  default     = "shihabullah@outlook.com"
+}
+
+variable "quicksight_edition" {
+  description = "QuickSight edition (STANDARD or ENTERPRISE)"
+  type        = string
+  default     = "ENTERPRISE"
+}
+
+variable "quicksight_authentication_method" {
+  description = "QuickSight authentication method"
+  type        = string
+  default     = "IAM_AND_QUICKSIGHT"
+}
+
+variable "quicksight_namespace" {
+  description = "QuickSight namespace"
+  type        = string
+  default     = "default"
+}
+
+variable "quicksight_user_name" {
+  description = "QuickSight username for permissions"
+  type        = string
+  default     = "160884803380"
+}
+
+variable "quicksight_athena_workgroup" {
+  description = "Athena workgroup for QuickSight"
+  type        = string
+  default     = "primary"
+}
+
+variable "quicksight_import_mode" {
+  description = "QuickSight dataset import mode (DIRECT_QUERY or SPICE)"
+  type        = string
+  default     = "DIRECT_QUERY"
+
+  validation {
+    condition     = contains(["DIRECT_QUERY", "SPICE"], var.quicksight_import_mode)
+    error_message = "quicksight_import_mode must be DIRECT_QUERY or SPICE."
+  }
+}
+
+variable "quicksight_service_role_name" {
+  description = "QuickSight service role name"
+  type        = string
+  default     = "aws-quicksight-service-role-v0"
+}
+
+variable "quicksight_enable_lakeformation_permissions" {
+  description = "Grant Lake Formation permissions for QuickSight"
+  type        = bool
+  default     = true
+}
+
+variable "athena_principal_arns" {
+  description = "IAM principal ARNs to grant Athena access via Lake Formation"
+  type        = list(string)
+  default     = ["arn:aws:iam::160884803380:user/shihab-ne"]
+}
+
+# -----------------------------------------------------------------------------
 # Step Functions Configuration
 # -----------------------------------------------------------------------------
 

@@ -874,7 +874,7 @@
                         <h3>Key Outputs</h3>
                         <ul style="font-size: 0.75em;">
                             <li><strong>Hourly Stats</strong> — Volume, users, content by domain</li>
-                            <li><strong>Risk Scores</strong> — User-level risk (0-100)</li>
+                            <li><strong>Risk Scores</strong> — Entity risk (0.0-1.0)</li>
                             <li><strong>Daily Summary</strong> — Platform health KPIs</li>
                             <li><strong>DQ Audit Trail</strong> — Evidence for compliance</li>
                         </ul>
@@ -1216,7 +1216,7 @@
                                     🥇 Gold Job
                                 </div>
                                 <div style="background: white; padding: 0.2em 0.4em; border-radius: 2px; border: 1px solid #ddd; font-size: 0.8em;">
-                                    <strong>Aggregations</strong>: hourly_stats &nbsp;|&nbsp; <strong>Risk scores</strong>: 0-100 scale
+                                    <strong>Aggregations</strong>: hourly_stats &nbsp;|&nbsp; <strong>Risk scores</strong>: 0.0-1.0 scale
                                 </div>
                                 
                                 <!-- Arrow -->
@@ -1444,7 +1444,7 @@
                     </tr>
                     <tr>
                         <td>Validity</td>
-                        <td><code>bot_percentage</code>, <code>risk_score</code> in 0-100 range</td>
+                        <td><code>bot_percentage</code> in 0-100 range, <code>risk_score</code> in 0.0-1.0 range</td>
                         <td>100%</td>
                         <td style="color: var(--alert-red);">✓</td>
                     </tr>
@@ -1670,15 +1670,16 @@
                     <div>
                         <h3 style="font-size: 0.8em;">📊 Risk Scoring</h3>
                         <table class="data-table" style="font-size: 0.7em;">
-                            <tr><td>High velocity</td><td>&gt;50/hr</td><td>+40</td></tr>
-                            <tr><td>Large deletions</td><td>&gt;3</td><td>+30</td></tr>
-                            <tr><td>Anonymous</td><td>&gt;50%</td><td>+20</td></tr>
-                            <tr><td>Cross-domain</td><td>&gt;5</td><td>+10</td></tr>
+                            <tr><td>High velocity</td><td>&gt;50/hr</td><td>+0.40</td></tr>
+                            <tr><td>Large deletions</td><td>&gt;3</td><td>+0.30</td></tr>
+                            <tr><td>Anonymous</td><td>&gt;50%</td><td>+0.20</td></tr>
+                            <tr><td>Cross-domain</td><td>&gt;5</td><td>+0.10</td></tr>
                         </table>
                         <p class="tiny" style="margin: 0.2em 0 0 0; font-size: 0.6em;">
-                            <strong style="color: var(--alert-red);">HIGH</strong> (70+) • 
-                            <strong style="color: var(--gold);">MEDIUM</strong> (40-69) • 
-                            <strong style="color: var(--dq-green);">LOW</strong> (0-39)
+                            <strong style="color: var(--alert-red);">CRITICAL</strong> (&gt;=0.85) • 
+                            <strong style="color: var(--gold);">HIGH</strong> (0.60-0.84) • 
+                            <strong style="color: var(--info-blue);">MEDIUM</strong> (0.30-0.59) • 
+                            <strong style="color: var(--dq-green);">LOW</strong> (0.00-0.29)
                         </p>
                     </div>
                 </div>
