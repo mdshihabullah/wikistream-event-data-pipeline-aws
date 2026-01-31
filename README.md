@@ -649,22 +649,20 @@ docker-compose up -d
 - Pipeline failures and trends
 - Infrastructure metrics (MSK, ECS, EMR)
 
-### Business Analytics (QuickSight - Manual Setup)
+### Business Analytics (QuickSight - Terraform Provisioned)
 
-AWS QuickSight dashboards for stakeholder insights (create manually via Console):
+AWS QuickSight is fully provisioned via Terraform with datasets connected to the Gold and Silver layers:
 
-```bash
-# Connect QuickSight to Gold layer via Athena:
-# QuickSight Console → Datasets → New Dataset → Athena
-# - Catalog: AwsDataCatalog
-# - Database: s3tablesbucket.gold
-# - Tables: hourly_stats, risk_scores, daily_analytics_summary
-```
+**Terraform-provisioned resources:**
+- QuickSight Athena Data Source
+- Datasets: `hourly_stats`, `risk_scores`, `daily_analytics_summary`, `silver_cleaned_events`
+- LakeFormation permissions for S3 Tables access
+- Glue catalog integration for S3 Tables
 
 **Available insights:**
 - Edit activity trends and volume KPIs
 - Regional and language analysis
-- Risk score monitoring (high/medium/low)
+- Risk score monitoring (HIGH/MEDIUM/LOW: 0-100 scale)
 - Bot vs human contributor patterns
 - Platform health score trends
 
