@@ -1,13 +1,39 @@
 locals {
   quicksight_user_arn = "arn:aws:quicksight:${var.region}:${var.account_id}:user/${var.quicksight_namespace}/${var.quicksight_user_name}"
+  quicksight_service_role_arn = "arn:aws:iam::${var.account_id}:role/${var.quicksight_service_role_name}"
   s3tables_catalog_id = "${var.account_id}:s3tablescatalog/${var.s3_tables_bucket_name}"
   s3tables_catalog    = "s3tablescatalog"
   s3tables_federated_identifier = "arn:aws:s3tables:${var.region}:${var.account_id}:bucket/*"
   quicksight_tables   = ["hourly_stats", "risk_scores", "daily_analytics_summary"]
-  athena_principal_arns = distinct(concat(
+  gold_database_name  = "gold"
+  silver_database_name = "silver"
+  silver_cleaned_events_table = "cleaned_events"
+  lf_permissions_describe = ["DESCRIBE"]
+  lf_permissions_select_describe = ["SELECT", "DESCRIBE"]
+  athena_principal_arns = concat(
     ["arn:aws:iam::${var.account_id}:root", data.aws_caller_identity.current.arn],
     var.athena_principal_arns
-  ))
+  )
+  quicksight_data_source_actions = [
+    "quicksight:DescribeDataSource",
+    "quicksight:DescribeDataSourcePermissions",
+    "quicksight:PassDataSource",
+    "quicksight:UpdateDataSource",
+    "quicksight:UpdateDataSourcePermissions",
+    "quicksight:DeleteDataSource"
+  ]
+  quicksight_dataset_actions = [
+    "quicksight:DescribeDataSet",
+    "quicksight:DescribeDataSetPermissions",
+    "quicksight:PassDataSet",
+    "quicksight:DescribeIngestion",
+    "quicksight:ListIngestions",
+    "quicksight:UpdateDataSet",
+    "quicksight:UpdateDataSetPermissions",
+    "quicksight:DeleteDataSet",
+    "quicksight:CreateIngestion",
+    "quicksight:CancelIngestion"
+  ]
 }
 
 data "aws_caller_identity" "current" {}
@@ -259,14 +285,7 @@ resource "aws_quicksight_data_source" "athena" {
 
   permission {
     principal = local.quicksight_user_arn
-    actions = [
-      "quicksight:DescribeDataSource",
-      "quicksight:DescribeDataSourcePermissions",
-      "quicksight:PassDataSource",
-      "quicksight:UpdateDataSource",
-      "quicksight:UpdateDataSourcePermissions",
-      "quicksight:DeleteDataSource"
-    ]
+    actions = local.quicksight_data_source_actions
   }
 
   depends_on = [aws_iam_role_policy.quicksight_glue_catalog]
@@ -378,18 +397,7 @@ resource "aws_quicksight_data_set" "hourly_stats" {
 
   permissions {
     principal = local.quicksight_user_arn
-    actions = [
-      "quicksight:DescribeDataSet",
-      "quicksight:DescribeDataSetPermissions",
-      "quicksight:PassDataSet",
-      "quicksight:DescribeIngestion",
-      "quicksight:ListIngestions",
-      "quicksight:UpdateDataSet",
-      "quicksight:UpdateDataSetPermissions",
-      "quicksight:DeleteDataSet",
-      "quicksight:CreateIngestion",
-      "quicksight:CancelIngestion"
-    ]
+    actions = local.quicksight_dataset_actions
   }
 }
 
@@ -463,18 +471,7 @@ resource "aws_quicksight_data_set" "risk_scores" {
 
   permissions {
     principal = local.quicksight_user_arn
-    actions = [
-      "quicksight:DescribeDataSet",
-      "quicksight:DescribeDataSetPermissions",
-      "quicksight:PassDataSet",
-      "quicksight:DescribeIngestion",
-      "quicksight:ListIngestions",
-      "quicksight:UpdateDataSet",
-      "quicksight:UpdateDataSetPermissions",
-      "quicksight:DeleteDataSet",
-      "quicksight:CreateIngestion",
-      "quicksight:CancelIngestion"
-    ]
+    actions = local.quicksight_dataset_actions
   }
 }
 
@@ -616,29 +613,136 @@ resource "aws_quicksight_data_set" "daily_analytics_summary" {
 
   permissions {
     principal = local.quicksight_user_arn
-    actions = [
-      "quicksight:DescribeDataSet",
-      "quicksight:DescribeDataSetPermissions",
-      "quicksight:PassDataSet",
-      "quicksight:DescribeIngestion",
-      "quicksight:ListIngestions",
-      "quicksight:UpdateDataSet",
-      "quicksight:UpdateDataSetPermissions",
-      "quicksight:DeleteDataSet",
-      "quicksight:CreateIngestion",
-      "quicksight:CancelIngestion"
-    ]
+    actions = local.quicksight_dataset_actions
+  }
+}
+
+resource "aws_quicksight_data_set" "silver_cleaned_events" {
+  aws_account_id = var.account_id
+  data_set_id    = "${var.name_prefix}-silver-cleaned-events"
+  name           = "${var.name_prefix}-silver-cleaned-events"
+  import_mode    = var.quicksight_import_mode
+
+  physical_table_map {
+    physical_table_map_id = "silver-cleaned-events"
+    custom_sql {
+      data_source_arn = aws_quicksight_data_source.athena.arn
+      name            = "silver_cleaned_events"
+      sql_query       = "SELECT * FROM \"${local.s3tables_catalog}\".${local.silver_database_name}.${local.silver_cleaned_events_table}"
+
+      columns {
+        name = "event_id"
+        type = "STRING"
+      }
+      columns {
+        name = "rc_id"
+        type = "DECIMAL"
+      }
+      columns {
+        name = "event_type"
+        type = "STRING"
+      }
+      columns {
+        name = "domain"
+        type = "STRING"
+      }
+      columns {
+        name = "region"
+        type = "STRING"
+      }
+      columns {
+        name = "language"
+        type = "STRING"
+      }
+      columns {
+        name = "title"
+        type = "STRING"
+      }
+      columns {
+        name = "namespace"
+        type = "INTEGER"
+      }
+      columns {
+        name = "user_normalized"
+        type = "STRING"
+      }
+      columns {
+        name = "is_bot"
+        type = "BOOLEAN"
+      }
+      columns {
+        name = "is_anonymous"
+        type = "BOOLEAN"
+      }
+      columns {
+        name = "length_old"
+        type = "INTEGER"
+      }
+      columns {
+        name = "length_new"
+        type = "INTEGER"
+      }
+      columns {
+        name = "length_delta"
+        type = "INTEGER"
+      }
+      columns {
+        name = "revision_old"
+        type = "DECIMAL"
+      }
+      columns {
+        name = "revision_new"
+        type = "DECIMAL"
+      }
+      columns {
+        name = "is_valid"
+        type = "BOOLEAN"
+      }
+      columns {
+        name = "is_large_deletion"
+        type = "BOOLEAN"
+      }
+      columns {
+        name = "is_large_addition"
+        type = "BOOLEAN"
+      }
+      columns {
+        name = "event_timestamp"
+        type = "DATETIME"
+      }
+      columns {
+        name = "bronze_processed_at"
+        type = "DATETIME"
+      }
+      columns {
+        name = "silver_processed_at"
+        type = "DATETIME"
+      }
+      columns {
+        name = "event_date"
+        type = "STRING"
+      }
+      columns {
+        name = "schema_version"
+        type = "STRING"
+      }
+    }
+  }
+
+  permissions {
+    principal = local.quicksight_user_arn
+    actions = local.quicksight_dataset_actions
   }
 }
 
 locals {
-  lakeformation_principal_arns = distinct(concat(
-    [local.quicksight_user_arn, data.aws_iam_role.quicksight_service_role.arn],
+  lakeformation_principal_arns = concat(
+    [local.quicksight_user_arn, local.quicksight_service_role_arn],
     local.athena_principal_arns
-  ))
+  )
   lakeformation_principal_map = {
-    for arn in local.lakeformation_principal_arns :
-    "principal-${substr(md5(arn), 0, 8)}" => arn
+    for idx, arn in local.lakeformation_principal_arns :
+    format("principal-%02d", idx) => arn
   }
   lakeformation_table_grants = {
     for item in flatten([
@@ -654,6 +758,18 @@ locals {
       table     = item.table
     }
   }
+  athena_principal_map = {
+    for idx, arn in local.athena_principal_arns :
+    format("athena-%02d", idx) => arn
+  }
+  quicksight_principal_arns = [
+    local.quicksight_user_arn,
+    local.quicksight_service_role_arn
+  ]
+  quicksight_principal_map = {
+    for idx, arn in local.quicksight_principal_arns :
+    format("quicksight-%02d", idx) => arn
+  }
 }
 
 resource "null_resource" "lakeformation_database_grants" {
@@ -663,6 +779,8 @@ resource "null_resource" "lakeformation_database_grants" {
     principal  = each.value
     catalog_id = local.s3tables_catalog_id
     region     = var.region
+    database_name = local.gold_database_name
+    permissions   = join(",", local.lf_permissions_describe)
     reconcile_version = "2"
   }
 
@@ -672,8 +790,8 @@ aws lakeformation grant-permissions \
   --region ${var.region} \
   --cli-input-json '${jsonencode({
   Principal = { DataLakePrincipalIdentifier = each.value }
-  Resource  = { Database = { Name = "gold", CatalogId = local.s3tables_catalog_id } }
-  Permissions = ["DESCRIBE"]
+  Resource  = { Database = { Name = local.gold_database_name, CatalogId = local.s3tables_catalog_id } }
+  Permissions = local.lf_permissions_describe
 })}' || true
 EOT
   }
@@ -687,8 +805,8 @@ aws lakeformation revoke-permissions \
   --region ${self.triggers.region} \
   --cli-input-json '${jsonencode({
   Principal = { DataLakePrincipalIdentifier = self.triggers.principal }
-  Resource  = { Database = { Name = "gold", CatalogId = self.triggers.catalog_id } }
-  Permissions = ["DESCRIBE"]
+  Resource  = { Database = { Name = lookup(self.triggers, "database_name", "gold"), CatalogId = self.triggers.catalog_id } }
+  Permissions = split(",", lookup(self.triggers, "permissions", "DESCRIBE"))
 })}' || true
 EOT
   }
@@ -702,6 +820,8 @@ resource "null_resource" "lakeformation_table_grants" {
     table      = each.value.table
     catalog_id = local.s3tables_catalog_id
     region     = var.region
+    database_name = local.gold_database_name
+    permissions   = join(",", local.lf_permissions_select_describe)
     reconcile_version = "2"
   }
 
@@ -711,8 +831,8 @@ aws lakeformation grant-permissions \
   --region ${var.region} \
   --cli-input-json '${jsonencode({
   Principal = { DataLakePrincipalIdentifier = each.value.principal }
-  Resource  = { Table = { CatalogId = local.s3tables_catalog_id, DatabaseName = "gold", Name = each.value.table } }
-  Permissions = ["SELECT", "DESCRIBE"]
+  Resource  = { Table = { CatalogId = local.s3tables_catalog_id, DatabaseName = local.gold_database_name, Name = each.value.table } }
+  Permissions = local.lf_permissions_select_describe
 })}' || true
 EOT
   }
@@ -726,8 +846,169 @@ aws lakeformation revoke-permissions \
   --region ${self.triggers.region} \
   --cli-input-json '${jsonencode({
   Principal = { DataLakePrincipalIdentifier = self.triggers.principal }
-  Resource  = { Table = { CatalogId = self.triggers.catalog_id, DatabaseName = "gold", Name = self.triggers.table } }
-  Permissions = ["SELECT", "DESCRIBE"]
+  Resource  = { Table = { CatalogId = self.triggers.catalog_id, DatabaseName = lookup(self.triggers, "database_name", "gold"), Name = self.triggers.table } }
+  Permissions = split(",", lookup(self.triggers, "permissions", "SELECT,DESCRIBE"))
+})}' || true
+EOT
+  }
+}
+
+resource "null_resource" "lakeformation_silver_database_grants" {
+  for_each = var.quicksight_enable_lakeformation_permissions ? local.athena_principal_map : {}
+
+  triggers = {
+    principal  = each.value
+    catalog_id = local.s3tables_catalog_id
+    region     = var.region
+    database_name = local.silver_database_name
+    permissions   = join(",", local.lf_permissions_describe)
+    reconcile_version = "1"
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+aws lakeformation grant-permissions \
+  --region ${var.region} \
+  --cli-input-json '${jsonencode({
+  Principal = { DataLakePrincipalIdentifier = each.value }
+  Resource  = { Database = { Name = local.silver_database_name, CatalogId = local.s3tables_catalog_id } }
+  Permissions = local.lf_permissions_describe
+})}' || true
+EOT
+  }
+
+  depends_on = [null_resource.s3tables_catalog_integration]
+
+  provisioner "local-exec" {
+    when = destroy
+    command = <<EOT
+aws lakeformation revoke-permissions \
+  --region ${self.triggers.region} \
+  --cli-input-json '${jsonencode({
+  Principal = { DataLakePrincipalIdentifier = self.triggers.principal }
+  Resource  = { Database = { Name = lookup(self.triggers, "database_name", "silver"), CatalogId = self.triggers.catalog_id } }
+  Permissions = split(",", lookup(self.triggers, "permissions", "DESCRIBE"))
+})}' || true
+EOT
+  }
+}
+
+resource "null_resource" "lakeformation_silver_table_grants" {
+  for_each = var.quicksight_enable_lakeformation_permissions ? local.athena_principal_map : {}
+
+  triggers = {
+    principal  = each.value
+    catalog_id = local.s3tables_catalog_id
+    region     = var.region
+    database_name = local.silver_database_name
+    permissions   = join(",", local.lf_permissions_select_describe)
+    reconcile_version = "1"
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+aws lakeformation grant-permissions \
+  --region ${var.region} \
+  --cli-input-json '${jsonencode({
+  Principal = { DataLakePrincipalIdentifier = each.value }
+  Resource  = { Table = { CatalogId = local.s3tables_catalog_id, DatabaseName = local.silver_database_name, TableWildcard = {} } }
+  Permissions = local.lf_permissions_select_describe
+})}' || true
+EOT
+  }
+
+  depends_on = [null_resource.s3tables_catalog_integration]
+
+  provisioner "local-exec" {
+    when = destroy
+    command = <<EOT
+aws lakeformation revoke-permissions \
+  --region ${self.triggers.region} \
+  --cli-input-json '${jsonencode({
+  Principal = { DataLakePrincipalIdentifier = self.triggers.principal }
+  Resource  = { Table = { CatalogId = self.triggers.catalog_id, DatabaseName = lookup(self.triggers, "database_name", "silver"), TableWildcard = {} } }
+  Permissions = split(",", lookup(self.triggers, "permissions", "SELECT,DESCRIBE"))
+})}' || true
+EOT
+  }
+}
+
+resource "null_resource" "lakeformation_quicksight_silver_database_grants" {
+  for_each = var.quicksight_enable_lakeformation_permissions ? local.quicksight_principal_map : {}
+
+  triggers = {
+    principal  = each.value
+    catalog_id = local.s3tables_catalog_id
+    region     = var.region
+    database_name = local.silver_database_name
+    permissions   = join(",", local.lf_permissions_describe)
+    reconcile_version = "1"
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+aws lakeformation grant-permissions \
+  --region ${var.region} \
+  --cli-input-json '${jsonencode({
+  Principal = { DataLakePrincipalIdentifier = each.value }
+  Resource  = { Database = { Name = local.silver_database_name, CatalogId = local.s3tables_catalog_id } }
+  Permissions = local.lf_permissions_describe
+})}' || true
+EOT
+  }
+
+  depends_on = [null_resource.s3tables_catalog_integration]
+
+  provisioner "local-exec" {
+    when = destroy
+    command = <<EOT
+aws lakeformation revoke-permissions \
+  --region ${self.triggers.region} \
+  --cli-input-json '${jsonencode({
+  Principal = { DataLakePrincipalIdentifier = self.triggers.principal }
+  Resource  = { Database = { Name = lookup(self.triggers, "database_name", "silver"), CatalogId = self.triggers.catalog_id } }
+  Permissions = split(",", lookup(self.triggers, "permissions", "DESCRIBE"))
+})}' || true
+EOT
+  }
+}
+
+resource "null_resource" "lakeformation_quicksight_silver_table_grants" {
+  for_each = var.quicksight_enable_lakeformation_permissions ? local.quicksight_principal_map : {}
+
+  triggers = {
+    principal  = each.value
+    catalog_id = local.s3tables_catalog_id
+    region     = var.region
+    database_name = local.silver_database_name
+    table_name    = local.silver_cleaned_events_table
+    permissions   = join(",", local.lf_permissions_select_describe)
+    reconcile_version = "1"
+  }
+
+  provisioner "local-exec" {
+    command = <<EOT
+aws lakeformation grant-permissions \
+  --region ${var.region} \
+  --cli-input-json '${jsonencode({
+  Principal = { DataLakePrincipalIdentifier = each.value }
+  Resource  = { Table = { CatalogId = local.s3tables_catalog_id, DatabaseName = local.silver_database_name, Name = local.silver_cleaned_events_table } }
+  Permissions = local.lf_permissions_select_describe
+})}' || true
+EOT
+  }
+
+  depends_on = [null_resource.s3tables_catalog_integration]
+
+  provisioner "local-exec" {
+    when = destroy
+    command = <<EOT
+aws lakeformation revoke-permissions \
+  --region ${self.triggers.region} \
+  --cli-input-json '${jsonencode({
+  Principal = { DataLakePrincipalIdentifier = self.triggers.principal }
+  Resource  = { Table = { CatalogId = self.triggers.catalog_id, DatabaseName = lookup(self.triggers, "database_name", "silver"), Name = lookup(self.triggers, "table_name", "cleaned_events") } }
+  Permissions = split(",", lookup(self.triggers, "permissions", "SELECT,DESCRIBE"))
 })}' || true
 EOT
   }

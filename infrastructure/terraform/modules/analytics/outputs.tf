@@ -17,3 +17,8 @@ output "quicksight_daily_summary_dataset_arn" {
   description = "QuickSight dataset ARN for daily_analytics_summary"
   value       = aws_quicksight_data_set.daily_analytics_summary.arn
 }
+
+output "quicksight_silver_cleaned_events_dataset_arn" {
+  description = "QuickSight dataset ARN for silver.cleaned_events"
+  value       = aws_quicksight_data_set.silver_cleaned_events.arn
+}
