@@ -722,7 +722,7 @@
             <section class="title-slide">
                 <div>
                 <h1>WikiStream</h1>
-                    <p class="subtitle">Real-Time Wikipedia Edit Analytics Pipeline</p>
+                    <p class="subtitle">Real-Time Wikipedia Event Streams Analytics Pipeline</p>
                     <div class="accent-bar" style="margin: 0 auto;"></div>
                 </div>
                 
@@ -875,7 +875,7 @@
                         <p>Aggregated<br>Risk Scores</p>
                     </div>
                     <span class="dq-arrow">→ Analytics →</span>
-                    <div class="medal" style="background: linear-gradient(135deg, #9B59B6, #8E44AD);">
+                    <div class="medal" style="background: linear-gradient(135deg, #60dfe6d4, #8E44AD);">
                         <h4>📊 QuickSight</h4>
                         <p>BI & Dashboard<br>Analytics</p>
                     </div>
@@ -1152,7 +1152,7 @@
                                 <div style="font-size: 1.3em;">📨</div>
                                 <strong>MSK Kafka</strong><br>
                                 <span class="tiny">Topics: raw-events, dlq-events</span><br>
-                                <span class="tiny">3-partition, replication=2</span>
+                                <span class="tiny">6-partition, replication=2</span>
                             </div>
                         </div>
                         
@@ -1451,7 +1451,120 @@
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 9: Data Quality Gates ==================== -->
+            <!-- ==================== SLIDE 9: Results & Deliverables ==================== -->
+            <section>
+                <h2>Outcomes & Deliverables</h2>
+                
+                <div class="two-col">
+                    <div>
+                        <h3>✅ Implementation Complete</h3>
+                <ul class="checklist">
+                            <li><strong>Real-time Ingestion:</strong> Kafka + DLQ for malformed</li>
+                            <li><strong>Medallion Architecture:</strong> Bronze/Silver/Gold + Audit</li>
+                            <li><strong>Idempotent:</strong> MERGE INTO with deterministic ID</li>
+                            <li><strong>DQ Gates:</strong> Block downstream on failure</li>
+                            <li><strong>Self-Looping Pipeline:</strong> Continuous processing</li>
+                            <li><strong>Auto-Recovery:</strong> Lambda restarts Bronze</li>
+                            <li><strong>Observability:</strong> CloudWatch + SNS alerts</li>
+                            <li><strong>IaC:</strong> Full Terraform (Module Architecture)</li>
+                            <li><strong>Analytics:</strong> QuickSight dashboards for insights</li>
+                </ul>
+                    </div>
+                    
+                    <div>
+                        <h3>📊 Key Metrics</h3>
+                        <div class="stats-row" style="flex-wrap: wrap; justify-content: flex-start; gap: 0.5em;">
+                            <div class="stat-box" style="flex: 1; min-width: 80px;">
+                                <span class="number">≤3min</span>
+                                <span class="label">Bronze SLA</span>
+                    </div>
+                            <div class="stat-box" style="flex: 1; min-width: 80px;">
+                                <span class="number">≤35min</span>
+                                <span class="label">E2E SLA</span>
+                    </div>
+                            <div class="stat-box" style="flex: 1; min-width: 80px;">
+                                <span class="number">95%+</span>
+                                <span class="label">DQ Pass</span>
+                    </div>
+                        </div>
+                        
+                        <h3 style="margin-top: 0.5em;">🛠️ Skills Demonstrated</h3>
+                        <div class="tech-grid" style="grid-template-columns: repeat(3, 1fr);">
+                            <div class="tech-item"><span class="name">MSK Kafka</span><span class="version">KRaft 3.9</span></div>
+                            <div class="tech-item"><span class="name">Iceberg</span><span class="version">1.10.0</span></div>
+                            <div class="tech-item"><span class="name">Spark</span><span class="version">3.5</span></div>
+                            <div class="tech-item"><span class="name">EMR</span><span class="version">7.12.0</span></div>
+                            <div class="tech-item"><span class="name">Step Func</span><span class="version">Self-loop</span></div>
+                            <div class="tech-item"><span class="name">Terraform</span><span class="version">1.6+</span></div>
+                            <div class="tech-item"><span class="name">Deequ</span><span class="version">2.0.7</span></div>
+                            <div class="tech-item"><span class="name">Python</span><span class="version">3.12</span></div>
+                            <div class="tech-item"><span class="name">DQ Gates</span><span class="version">Fail-fast</span></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="slide-footer">
+                    <span class="brand">WikiStream</span>
+                    <span>Results</span>
+                </div>
+            </section>
+            
+            <!-- ==================== SLIDE 10: Thank You & Discussion ==================== -->
+            <section>
+                <h2 style="text-align: center;">Thank You — Let's Discuss</h2>
+                <p class="tiny" style="text-align: center;"><b>Some Non-FAQs</b></p>
+                
+                <div class="discussion-grid">
+                    <div class="discussion-item" style="border-left-color: var(--nf-purple);">
+                        <h4>⚡ Why Bronze Streaming + Silver/Gold Batch?</h4>
+                        <p>Bronze streaming achieves ≤3-min SLA for real-time ingestion. Batch processing for Silver/Gold is cost-effective and allows comprehensive DQ checks. This hybrid pattern optimizes freshness (Bronze) while minimizing compute costs (Silver/Gold).</p>
+                    </div>
+
+                    <div class="discussion-item" style="border-left-color: var(--info-blue);">
+                        <h4>📨 MSK Kafka vs Kinesis Data Streams?</h4>
+                        <p>Kafka provides replay capability for Bronze reprocessing—critical for recovery and debugging. KRaft mode eliminates Zookeeper complexity. Kafka better handles high throughput (500-700 edits/min) with flexible retention and DLQ support.</p>
+                    </div>
+
+                    <div class="discussion-item" style="border-left-color: var(--gold);">
+                        <h4>🔄 How Does Step Functions Self-Looping Work?</h4>
+                        <p>After Gold DQ passes, Step Functions triggers the next cycle automatically. 15-min initial wait ensures Bronze data is ready (3-min batch + buffer). Each cycle runs to completion before next starts—no overlap, no gaps. EMR cold start (5-8 min) is accounted for in the 15-25 min cycle time.</p>
+                    </div>
+
+                    <div class="discussion-item" style="border-left-color: var(--dq-green);">
+                        <h4>⏰ How Does the 10-min Watermark Handle Late Events?</h4>
+                        <p>Bronze streaming uses 10-min watermark—events arriving >10 min after event_timestamp are dropped. Gold hourly aggregations use event_hour partition, so late events in correct hour still aggregate. Trade-off: 10-min balance minimizes dropped events while limiting Iceberg snapshot bloat. For production, consider per-event-type watermarks (log events lower latency vs categorize higher latency).</p>
+                    </div>
+
+                    <div class="discussion-item" style="border-left-color: var(--alert-red);">
+                        <h4>🔄 How Is Idempotency Ensured Across Restarts?</h4>
+                        <p>Deterministic event_id = SHA256(event_timestamp + wiki + title + rev_id) ensures same event always maps to same ID. Bronze MERGE INTO upserts on event_id—duplicates are overwritten, not duplicated. On Bronze restart (Lambda-triggered), Kafka replay reprocesses same events but idempotency prevents double-counting. Silver deduplicates by event_id across partitions. Audit trail logs merge operations for verification.</p>
+                    </div>
+
+                    <div class="discussion-item" style="border-left-color: var(--alert-red);">
+                        <h4>🚨 Failure Recovery: Bronze vs Batch?</h4>
+                        <p>Bronze Streaming: Lambda monitors CloudWatch metrics (no records in 10 min) → triggers EMR job restart. Batch Pipeline: Stops on DQ failure → manual investigation → restart with fresh data. Kafka retention (7 days) enables Bronze replay for backfilling missing periods.</p>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 0.4em; display: flex; justify-content: center; gap: 1em; align-items: center;">
+                    <div style="padding: 0.4em 0.6em; background: var(--nf-light-gray); border-radius: 4px; text-align: center;">
+                        <p style="font-size: 0.75em; margin: 0;">
+                            📁 <a href="https://github.com/mdshihabullah/wikistream-event-data-pipeline-aws/" target="_blank" style="color: var(--nf-orange);">github.com/mdshihabullah/wikistream-event-data-pipeline-aws</a>
+                        </p>
+                    </div>
+                    <div style="font-size: 0.65em; color: var(--nf-medium-gray); text-align: center;">
+                        <strong style="color: var(--nf-charcoal);">Key Differentiators:</strong><br>
+                        Self-looping batch • Fail-fast DQ • Serverless-first • QuickSight Analytics
+                    </div>
+                </div>
+                
+                <div class="slide-footer">
+                    <span class="brand">WikiStream</span>
+                    <span>Discussion Topics</span>
+                </div>
+            </section>
+            
+            <!-- ==================== SLIDE 11: Data Quality Gates ==================== -->
             <section>
                 <h2>Data Quality Gates</h2>
                 <p class="tiny">AWS Deequ 2.0.7 — Gates block downstream processing on failure</p>
@@ -1569,7 +1682,7 @@
                 </div>
             </section>
             
-            <!-- ==================== SLIDE 10: Step Functions Pipeline ==================== -->
+            <!-- ==================== SLIDE 12: Step Functions Pipeline ==================== -->
             <section>
                 <h2>Step Functions: Batch Pipeline</h2>
                 <p style="font-size: 0.7em; color: var(--nf-medium-gray); margin-bottom: 0.4em;">Orchestrates batch processing with DQ gates comprising Medallion architecture — <b>self-loops</b> continuously after successful completion</p>
@@ -1621,119 +1734,6 @@
                 <div class="slide-footer">
                     <span class="brand">WikiStream</span>
                     <span>Step Functions Pipeline</span>
-                </div>
-            </section>
-            
-            <!-- ==================== SLIDE 11: Results & Deliverables ==================== -->
-            <section>
-                <h2>Outcomes & Deliverables</h2>
-                
-                <div class="two-col">
-                    <div>
-                        <h3>✅ Implementation Complete</h3>
-                <ul class="checklist">
-                            <li><strong>Real-time Ingestion:</strong> Kafka + DLQ for malformed</li>
-                            <li><strong>Medallion Architecture:</strong> Bronze/Silver/Gold + Audit</li>
-                            <li><strong>Idempotent:</strong> MERGE INTO with deterministic ID</li>
-                            <li><strong>DQ Gates:</strong> Block downstream on failure</li>
-                            <li><strong>Self-Looping Pipeline:</strong> Continuous processing</li>
-                            <li><strong>Auto-Recovery:</strong> Lambda restarts Bronze</li>
-                            <li><strong>Observability:</strong> CloudWatch + SNS alerts</li>
-                            <li><strong>IaC:</strong> Full Terraform (~2600 lines)</li>
-                            <li><strong>Analytics:</strong> QuickSight dashboards for insights</li>
-                </ul>
-                    </div>
-                    
-                    <div>
-                        <h3>📊 Key Metrics</h3>
-                        <div class="stats-row" style="flex-wrap: wrap; justify-content: flex-start; gap: 0.5em;">
-                            <div class="stat-box" style="flex: 1; min-width: 80px;">
-                                <span class="number">≤3min</span>
-                                <span class="label">Bronze SLA</span>
-                    </div>
-                            <div class="stat-box" style="flex: 1; min-width: 80px;">
-                                <span class="number">≤35min</span>
-                                <span class="label">E2E SLA</span>
-                    </div>
-                            <div class="stat-box" style="flex: 1; min-width: 80px;">
-                                <span class="number">95%+</span>
-                                <span class="label">DQ Pass</span>
-                    </div>
-                        </div>
-                        
-                        <h3 style="margin-top: 0.5em;">🛠️ Skills Demonstrated</h3>
-                        <div class="tech-grid" style="grid-template-columns: repeat(3, 1fr);">
-                            <div class="tech-item"><span class="name">MSK Kafka</span><span class="version">KRaft 3.9</span></div>
-                            <div class="tech-item"><span class="name">Iceberg</span><span class="version">1.10.0</span></div>
-                            <div class="tech-item"><span class="name">Spark</span><span class="version">3.5</span></div>
-                            <div class="tech-item"><span class="name">EMR</span><span class="version">7.12.0</span></div>
-                            <div class="tech-item"><span class="name">Step Func</span><span class="version">Self-loop</span></div>
-                            <div class="tech-item"><span class="name">Terraform</span><span class="version">1.6+</span></div>
-                            <div class="tech-item"><span class="name">Deequ</span><span class="version">2.0.7</span></div>
-                            <div class="tech-item"><span class="name">Python</span><span class="version">3.12</span></div>
-                            <div class="tech-item"><span class="name">DQ Gates</span><span class="version">Fail-fast</span></div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="slide-footer">
-                    <span class="brand">WikiStream</span>
-                    <span>Results</span>
-                </div>
-            </section>
-            
-            <!-- ==================== SLIDE 12: Thank You & Discussion ==================== -->
-            <section>
-                <h2 style="text-align: center;">Thank You — Let's Discuss</h2>
-                <p class="tiny" style="text-align: center;">Topics for deeper technical conversation</p>
-                
-                <div class="discussion-grid">
-                    <div class="discussion-item" style="border-left-color: var(--bronze);">
-                        <h4>🥉 Why 3-min Micro-batches for Bronze?</h4>
-                        <p>Trade-off between latency and Iceberg snapshot overhead. Shorter batches = more snapshots = higher compaction cost. 3 min balances freshness vs. maintenance.</p>
-                    </div>
-                    
-                    <div class="discussion-item" style="border-left-color: var(--dq-green);">
-                        <h4>🔍 DQ Gates: Why Block Instead of Alert-Only?</h4>
-                        <p>Fail-fast prevents cascading bad data to Gold. Better to stop and fix at source than propagate corruption. Audit trail enables root cause analysis.</p>
-                </div>
-                    
-                    <div class="discussion-item" style="border-left-color: var(--nf-teal);">
-                        <h4>🔄 Self-Looping vs. EventBridge Schedule?</h4>
-                        <p>Self-loop ensures previous cycle completes before next starts. Fixed schedules risk overlap or gaps. 10-min wait between cycles prevents resource contention.</p>
-                </div>
-                    
-                    <div class="discussion-item" style="border-left-color: var(--gold);">
-                        <h4>💰 Serverless Cost vs. Provisioned?</h4>
-                        <p>At ~$260/mo workload, serverless wins. Break-even around $500/mo continuous. EMR Serverless cold start (5-8 min) is acceptable for batch; 15-min timeout accounts for this.</p>
-                    </div>
-                    
-                    <div class="discussion-item" style="border-left-color: var(--info-blue);">
-                        <h4>🧊 Why Iceberg v2 on S3 Tables?</h4>
-                        <p>Merge-on-read for upserts, ACID transactions, time-travel for debugging, auto-compaction. S3 Tables = AWS-managed catalog, no Glue overhead.</p>
-                    </div>
-                    
-                    <div class="discussion-item" style="border-left-color: var(--alert-red);">
-                        <h4>🚨 Failure Recovery Strategies?</h4>
-                        <p>Bronze: Lambda auto-restart on health check failure. Batch: Pipeline stops on DQ failure → manual fix → restart. Kafka replay capability for Bronze reprocessing.</p>
-                    </div>
-                </div>
-                
-                <div style="margin-top: 0.4em; display: flex; justify-content: center; gap: 1em; align-items: center;">
-                    <div style="padding: 0.4em 0.6em; background: var(--nf-light-gray); border-radius: 4px; text-align: center;">
-                        <p style="font-size: 0.75em; margin: 0;">
-                            📁 <a href="https://github.com/mdshihabullah/wikistream-event-data-pipeline-aws/" target="_blank" style="color: var(--nf-orange);">github.com/mdshihabullah/wikistream-event-data-pipeline-aws</a>
-                        </p>
-                    </div>
-                    <div style="font-size: 0.65em; color: var(--nf-medium-gray); text-align: center;">
-                        <strong style="color: var(--nf-charcoal);">Key Differentiators:</strong><br>
-                        Self-looping batch • Fail-fast DQ • Serverless-first • QuickSight Analytics
-                    </div>
-                </div>
-                
-                <div class="slide-footer">
-                    <span class="brand">WikiStream</span>
-                    <span>Discussion Topics</span>
                 </div>
             </section>
             
