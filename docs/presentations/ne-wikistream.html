@@ -722,17 +722,17 @@
             <section class="title-slide">
                 <div>
                 <h1>WikiStream</h1>
-                    <p class="subtitle">Real-Time Wikipedia Event Streams Analytics Pipeline</p>
+                    <p class="subtitle">Wikipedia Event Streams Analytics Pipeline</p>
                     <div class="accent-bar" style="margin: 0 auto;"></div>
                 </div>
                 
                 <div class="stats-row" style="margin-top: 1em;">
                     <div class="stat-box">
-                        <span class="number">500+</span>
+                        <span class="number">100+</span>
                         <span class="label">Edits/Minute</span>
                     </div>
                     <div class="stat-box">
-                        <span class="number">300+</span>
+                        <span class="number">15+</span>
                         <span class="label">Languages</span>
                     </div>
                     <div class="stat-box">
@@ -784,14 +784,14 @@
                     <div>
                         <h3>📊 Why Wikipedia Analytics?</h3>
                         <p>Wikimedia is one of the largest collaborative platforms globally with 
-                        <span class="highlight">500-700 edits/minute</span> across 300+ language editions.</p>
+                        <span class="highlight">100+ edits/minute</span> across 300+ language editions.</p>
                         
                         <table class="data-table">
                             <tr><th>Metric</th><th>Value</th></tr>
                             <tr><td>Wikipedia Editions</td><td>300+ languages</td></tr>
                             <tr><td>Monthly Active Editors</td><td>280,000+</td></tr>
                             <tr><td>Bot Edits</td><td>20-30% of total</td></tr>
-                            <tr><td>Peak Edit Rate</td><td>1,500+ edits/min</td></tr>
+                            <tr><td>Peak Edit Rate</td><td>300-1,500+ edits/min</td></tr>
                         </table>
                         
                         <div class="info-box" style="margin-top: 0.5em;">
@@ -1081,25 +1081,25 @@
                         <td><strong>Orchestration</strong></td>
                         <td>Step Functions (self-loop)</td>
                         <td><span class="highlight-green">90% cheaper than MWAA</span> • Serverless</td>
-                        <td>MWAA/Airflow ($250+/mo)</td>
+                        <td>MWAA/ Airflow, Dagster ($250+/mo)</td>
                     </tr>
                     <tr>
                         <td><strong>Data Quality</strong></td>
                         <td>Deequ 2.0.7 + DQ Gates</td>
                         <td>Blocks downstream on failure • Audit trail</td>
-                        <td>Great Expectations</td>
+                        <td>Soda, Great Expectations</td>
                     </tr>
                     <tr>
                         <td><strong>IaC</strong></td>
                         <td>Terraform 1.6+</td>
                         <td>Full AWS coverage • State management (S3, DynamoDB)</td>
-                        <td>CloudFormation</td>
+                        <td>Pulumi, CloudFormation</td>
                     </tr>
                     <tr>
                         <td><strong>Analytics</strong></td>
                         <td>Amazon QuickSight</td>
                         <td>Native AWS integration • Direct S3 Tables access • Serverless BI dashboards</td>
-                        <td>Metabase, Grafana + ClickHouse</td>
+                        <td>Metabase, Grafana, ClickHouse</td>
                     </tr>
                 </table>
                 
@@ -1536,13 +1536,13 @@
                     </div>
 
                     <div class="discussion-item" style="border-left-color: var(--alert-red);">
-                        <h4>🚨 Failure Recovery: Bronze Streaming vs Batch Pipeline?</h4>
-                        <p><strong>Bronze Streaming:</strong> Lambda monitors CloudWatch (no records 10 min) → triggers EMR job restart. Kafka retention (7 days) enables replay for backfilling. <strong>Batch Pipeline:</strong> Stops on DQ failure → manual investigation → restart with fresh data. Combined recovery ensures data completeness while maintaining fail-fast DQ integrity.</p>
+                        <h4>🔄 How Is Idempotency Ensured Across Restarts?</h4>
+                        <p>Deterministic event_id = SHA256(event_timestamp + wiki + title + rev_id) ensures same event always maps to same ID. Bronze MERGE INTO upserts on event_id—duplicates are overwritten, not duplicated. On Bronze restart (Lambda-triggered), Kafka replay reprocesses same events but idempotency prevents double-counting. Silver deduplicates by event_id across partitions. Audit trail logs merge operations for verification.</p>
                     </div>
 
-                    <div class="discussion-item" style="border-left-color: var(--info-blue);">
-                        <h4>📋 How Does Schema Contract & Validation Protect Data Quality?</h4>
-                        <p>Schema contracts (JSON in schemas/) define expected table structures. Spark jobs validate DataFrames before writing: check required fields, enforce types/ranges/patterns, detect schema drift (added/removed columns, type changes). SchemaRegistry loads contracts, Validator enforces constraints, violations logged to dq_audit.validation_issues. Prevents corrupted data from reaching downstream tables.</p>
+                    <div class="discussion-item" style="border-left-color: var(--alert-red);">
+                        <h4>🚨 Failure Recovery: Bronze vs Batch?</h4>
+                        <p>Bronze Streaming: Lambda monitors CloudWatch metrics (no records in 10 min) → triggers EMR job restart. Batch Pipeline: Stops on DQ failure → manual investigation → restart with fresh data. Kafka retention (7 days) enables Bronze replay for backfilling missing periods.</p>
                     </div>
                 </div>
                 
@@ -1579,8 +1579,6 @@
                 
                 <div class="dq-flow" style="margin-bottom: 0.4em;">
                     <div class="dq-step" style="background: var(--bronze); color: white;">Bronze</div>
-                    <span>→</span>
-                    <div class="dq-step" style="background: var(--info-blue); color: white;">Validate Schema</div>
                     <span>→</span>
                     <div class="dq-step gate">🔍 DQ</div>
                     <span>→</span>
